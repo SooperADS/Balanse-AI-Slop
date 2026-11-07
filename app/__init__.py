@@ -5,20 +5,21 @@ import secrets
 import hmac
 import time
 
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import date, datetime, time as day_time, timezone
+from dataclasses import dataclass
 from collections.abc import Mapping
-from typing import Any, Literal, cast
+from typing import Any, Literal
 from flask import Flask, abort, g, redirect, render_template, request, url_for
 from flask.typing import ResponseReturnValue
-from werkzeug.datastructures import MultiDict
 from werkzeug.exceptions import HTTPException
 from werkzeug.wrappers import Response
 from werkzeug.security import check_password_hash
 
 from app import db as dbm
 from app import config
+from app.domain import effective_rate
 from app.domain import (
+	Entry,
 	CURRENCIES,
 	SYMBOLS,
 	ValidationError,
@@ -32,7 +33,6 @@ from app.domain import (
 	save_profile,
 	calc_statistics
 )
-from app.domain import effective_rate
 
 # Cookie постоянной серверной сессии; в БД хранится только хеш токена.
 COOKIE: str = 'budget_session'
@@ -43,11 +43,28 @@ LOGIN_COOKIE: str = 'budget_login_csrf'
 APP: Flask = Flask(__name__)
 APP.config.update(
 	MAX_CONTENT_LENGTH=128 * 1024,  # Встроенный лимит Flask: 128 КиБ тела запроса.
-	DATABASE=str(Path('data/budget.sqlite3').resolve()),
-	MAX_LOGIN_ATTEMPTS=5,
 )
 APP.teardown_appcontext(dbm.close)
 APP.add_template_filter(effective_rate, 'effective_rate')
+
+@dataclass(frozen=True, slots=True)
+class _Session:
+	"""Проверенная сессия запроса без уже использованного отпечатка пароля."""
+
+	token_hash: str
+	csrf_token: str
+	profile_id: int | None
+
+
+def _find_session(token: str) -> _Session | None:
+	"""Найти сессию текущего пароля; секрет токена не хранится в объекте."""
+	row = dbm.get().execute(
+		'SELECT token_hash, csrf_token, profile_id FROM auth_sessions '
+		'WHERE token_hash=? AND password_fingerprint=?',
+		(config.token_hash(token), config.get().password_fingerprint),
+	).fetchone()
+	return _Session(row['token_hash'], row['csrf_token'], row['profile_id']) if row else None
+
 
 # ===================
 #  Authorization
@@ -65,17 +82,14 @@ def authenticate() -> Response | None:
 
 	raw_token = request.cookies.get(COOKIE, '')
 	if raw_token:
-		g.auth = dbm.get().execute(
-			'SELECT * FROM auth_sessions WHERE token_hash = ? AND password_fingerprint = ?',
-			(config.token_hash(raw_token), config.get()['PASSWORD_FINGERPRINT'])
-		).fetchone()
+		g.auth = _find_session(raw_token)
 
 	if g.auth is None:
 		if request.endpoint != 'login':
 			return redirect(url_for('login'))
 		g.csrf = request.cookies.get(LOGIN_COOKIE) or secrets.token_urlsafe(32)
 	else:
-		g.csrf = g.auth['csrf_token']
+		g.csrf = g.auth.csrf_token
 
 	if request.method == 'POST':
 		cookie_present = g.auth is not None or bool(request.cookies.get(LOGIN_COOKIE))
@@ -138,7 +152,7 @@ def select_profile() -> Response | None:
 		return None
 	db = dbm.get()
 	g.profile = db.execute(
-		'SELECT * FROM profiles WHERE id = ?', (g.auth['profile_id'],)
+		'SELECT * FROM profiles WHERE id = ?', (g.auth.profile_id,)
 	).fetchone()
 
 	if g.profile is None:
@@ -147,7 +161,7 @@ def select_profile() -> Response | None:
 			with db:
 				db.execute(
 					'UPDATE auth_sessions SET profile_id=? WHERE token_hash=?',
-					(g.profile['id'], g.auth['token_hash'])
+					(g.profile['id'], g.auth.token_hash)
 				)
 		elif request.endpoint != 'new_profile':
 			return redirect(url_for('new_profile'))
@@ -193,14 +207,14 @@ def amount_input(value: int) -> str:
 	return ('-' if value < 0 else '') + f'{whole}.{cents:02d}'
 
 @APP.template_filter('localdate')
-def localdate(value: str) -> str:
+def localdate(value: datetime) -> str:
 	"""Фильтр localdate: локальные дата и время ISO в формат ДД.ММ.ГГГГ · ЧЧ:ММ."""
-	return datetime.fromisoformat(value).strftime('%d.%m.%Y · %H:%M')
+	return value.strftime('%d.%m.%Y · %H:%M')
 
 @APP.template_filter('calendar_date')
-def calendar_date(value: str) -> str:
+def calendar_date(value: date) -> str:
 	"""Фильтр calendar_date: дата ISO в формат ДД.ММ.ГГГГ."""
-	return datetime.fromisoformat(value).strftime('%d.%m.%Y')
+	return value.strftime('%d.%m.%Y')
 
 @APP.errorhandler(400)
 @APP.errorhandler(404)
@@ -242,7 +256,7 @@ def login() -> ResponseReturnValue:
 				'SELECT * FROM login_attempts WHERE address = ?', (address,)
 			).fetchone()
 
-			if attempt and attempt['count'] >= config.get()['MAX_LOGIN_ATTEMPTS']:
+			if attempt and attempt['count'] >= config.get().max_login_attempts:
 				g.error = 'Слишком много попыток. Попробуйте через 15 минут.'
 				return render_template('login.html'), 429
 			db.execute(
@@ -253,7 +267,7 @@ def login() -> ResponseReturnValue:
 
 		password = request.form.get('password', '')
 		if (len(password) <= 512
-			and check_password_hash(config.get()['PASSWORD_HASH'], password)):
+			and check_password_hash(config.get().password_hash, password)):
 			token = secrets.token_urlsafe(32)
 
 			with db:
@@ -264,7 +278,7 @@ def login() -> ResponseReturnValue:
 					'VALUES (?, ?, ?)',
 					(
 						config.token_hash(token),
-						config.get()['PASSWORD_FINGERPRINT'],
+						config.get().password_fingerprint,
 						secrets.token_urlsafe(32)
 					)
 				)
@@ -282,7 +296,7 @@ def login() -> ResponseReturnValue:
 def logout() -> Response:
 	"""Отозвать только текущую сессию в БД и удалить её cookie из браузера."""
 	with dbm.get() as db:
-		db.execute('DELETE FROM auth_sessions WHERE token_hash = ?', (g.auth['token_hash'],))
+		db.execute('DELETE FROM auth_sessions WHERE token_hash = ?', (g.auth.token_hash,))
 
 	response = redirect(url_for('login'))
 	response.delete_cookie(COOKIE)
@@ -291,7 +305,7 @@ def logout() -> Response:
 @APP.get('/')
 def overview() -> str:
 	"""Показать текущие балансы и две группы статистики за выбранный период."""
-	entries = fetch_entries_for(g.profile['id'], g.now)
+	entries = fetch_entries_for(g.profile['id'])
 	period = request.args.get('period', 'month')
 	currency = request.args.get('currency', 'RUB')
 	if currency not in CURRENCIES:
@@ -332,51 +346,49 @@ def entry_list() -> str:
 	
 	Все переданные tag должны присутствовать; category_id=none означает NULL.
 	Фильтр валюты учитывает обе стороны трансфера; даты включительны."""
-	entries = fetch_entries_for(g.profile['id'], g.now)
+	entries = fetch_entries_for(g.profile['id'])
 	args = request.args
 
-	fields: tuple[Literal['kind'], ...] = ('kind',)
-	for field in fields:
-		if args.get(field):
-			entries = [e for e in entries if str(e[field]) == args[field]]
+	if args.get('kind'):
+		entries = [e for e in entries if e.kind == args['kind']]
 	if args.get('category_id') == 'none':
-		entries = [e for e in entries if e['category_id'] is None]
+		entries = [e for e in entries if e.category_id is None]
 	elif args.get('category_id'):
 		entries = [
-			e for e in entries if str(e['category_id']) == args['category_id']
+			e for e in entries if str(e.category_id) == args['category_id']
 		]
 	if args.get('currency'):
 		entries = [
-			e for e in entries if args['currency'] in (e['currency'], e['destination_currency'])
+			e for e in entries if args['currency'] in (e.currency, e.destination_currency)
 		]
 	selected_tags = {tag for tag in args.getlist('tag') if tag}
 	q = args.get('q')
 	if selected_tags:
 		entries = [
-			e for e in entries if selected_tags.issubset({str(t['id']) for t in e['tags']})
+			e for e in entries if selected_tags.issubset({str(t.id) for t in e.tags})
 		]
 
 	if q:
-		entries = [e for e in entries if q.casefold() in e['comment'].casefold()]
+		entries = [e for e in entries if q.casefold() in e.comment.casefold()]
 	
 	for date_field, lower in (('from', True), ('to', False)):
 		raw = args.get(date_field)
 		if raw:
 			try:
-				datetime.strptime(raw, '%Y-%m-%d')
+				boundary = datetime.combine(datetime.strptime(raw, '%Y-%m-%d').date(), day_time.min if lower else day_time.max)
 			except ValueError:
 				abort(400, description='Некорректная дата фильтра.')
 
 			entries = [e for e in entries if (
-				e['occurred_at'][:10] >= raw if lower else e['occurred_at'][:10] <= raw
+				e.occurred_at >= boundary if lower else e.occurred_at <= boundary
 			)]
 
 	return render_template(
 		'entries.html',
 		active='entries',
 		entries=entries,
-		current_entries=[e for e in entries if not e['planned']],
-		planned_entries=[e for e in entries if e['planned']],
+		current_entries=[e for e in entries if not e.is_planned(g.now)],
+		planned_entries=[e for e in entries if e.is_planned(g.now)],
 		categories=_fetch_catalog('categories'),
 		tags=_fetch_catalog('tags'),
 		selected_tags=selected_tags,
@@ -388,22 +400,20 @@ def entry_form(entry_id: int | None = None) -> ResponseReturnValue:
 	"""Показать форму новой/существующей записи или сохранить её после проверки.
 	
 	При ошибке сохранить введённые значения и вернуть статус 422."""
-	entry, selected_tags = None, []
-	if entry_id is not None:
-		entry = dict(
-			fetch_owned('entries', entry_id, g.profile['id'])
-		)
-		selected_tags = [str(r['tag_id']) for r in dbm.get().execute(
-			'SELECT tag_id FROM entry_tags WHERE entry_id = ? AND profile_id=?',
-			(entry_id, g.profile['id'])
-		)]
-
-	values: dict[str, Any] | MultiDict[str, str] = dict(entry or {})
-	if entry:
-		values['amount'] = amount_input(abs(entry['amount']))
-		values['kind'] = 'transfer' if entry['destination_currency'] is not None else 'income' if entry['amount'] > 0 else 'expense'
-		if entry['destination_currency'] is not None:
-			values['destination_amount'] = amount_input(entry['destination_amount'])
+	entry = Entry.from_row(fetch_owned('entries', entry_id, g.profile['id'])) if entry_id is not None else None
+	selected_tags = [str(row['tag_id']) for row in dbm.get().execute(
+		'SELECT tag_id FROM entry_tags WHERE entry_id=? AND profile_id=?',
+		(entry_id, g.profile['id']),
+	)] if entry is not None else []
+	values: Mapping[str, str] = {}
+	if entry is not None:
+		values = {
+			'kind': entry.kind, 'amount': amount_input(abs(entry.amount)),
+			'currency': entry.currency, 'occurred_at': entry.occurred_at.isoformat(timespec='seconds'),
+			'comment': entry.comment, 'category_id': str(entry.category_id) if entry.category_id is not None else '',
+			'destination_currency': entry.destination_currency or 'USD',
+			'destination_amount': amount_input(entry.destination_amount) if entry.destination_amount is not None else '',
+		}
 
 	status = 200
 	if request.method == 'POST':
@@ -449,7 +459,7 @@ def new_profile() -> ResponseReturnValue:
 			with dbm.get() as db:
 				db.execute(
 					'UPDATE auth_sessions SET profile_id = ? WHERE token_hash = ?',
-					(profile_id, g.auth['token_hash'])
+					(profile_id, g.auth.token_hash)
 				)
 			return redirect(url_for('overview', done='profile'))
 		except ValidationError as error:
@@ -475,7 +485,7 @@ def switch_profile() -> Response:
 	with dbm.get() as db:
 		db.execute(
 			'UPDATE auth_sessions SET profile_id = ? WHERE token_hash = ?',
-			(profile['id'], g.auth['token_hash'])
+			(profile['id'], g.auth.token_hash)
 		)
 	return redirect(url_for('overview', done='switched'))
 
@@ -586,28 +596,20 @@ def change_library(kind: str, action: str) -> ResponseReturnValue:
 
 # ====================
 
-def init(config_obj: Mapping[str, object]) -> Flask:
-	"""Настроить модульный экземпляр Flask и создать отсутствующие таблицы SQLite.
-	
-	Удалить сессии с другим отпечатком пароля. Существующие данные не сбрасываются,
-	автоматической миграции изменившихся таблиц нет. Допустим повторный вызов в тестах."""
-	APP.config.update(config_obj)
+def init(settings: config.AppConfig, *, testing: bool = False) -> Flask:
+	"""Настроить и вернуть единственный APP процесса, не создавая новый Flask.
 
-	app_config = cast(config.AppConfig, APP.config)
-	app_config.setdefault(
-		'PASSWORD_FINGERPRINT',
-		config.token_hash(app_config['PASSWORD_HASH'])
-	)
-
+	Маршруты и обработчики зарегистрированы один раз при импорте модуля.
+	Повторный вызов заменяет настройки существующего APP, что нужно тестам.
+	Схема и данные сохраняются, автоматической миграции нет.
+	"""
+	APP.extensions[config.CONFIG_KEY] = settings
+	APP.config['TESTING'] = testing
 	with APP.app_context():
-		path = Path(app_config['DATABASE'])
-		path.parent.mkdir(parents=True, exist_ok=True)
-
-		with dbm.get() as db:
-			db.executescript(Path(__file__).with_name('schema.sql').read_text())
-			db.execute(
+		dbm.initialize()
+		with dbm.get() as connection:
+			connection.execute(
 				'DELETE FROM auth_sessions WHERE password_fingerprint != ?',
-				(app_config['PASSWORD_FINGERPRINT'],)
+				(settings.password_fingerprint,),
 			)
-	
 	return APP

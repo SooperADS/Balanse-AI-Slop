@@ -1,35 +1,60 @@
-"""Чтение TOML-конфигурации и доступ к проверенным настройкам Flask."""
+"""Чтение TOML и типизированные настройки единственного приложения процесса."""
 
 import hashlib
 import tomllib
-
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TypedDict, cast
-from werkzeug.security import generate_password_hash
+from typing import Final, cast
+
 from flask import current_app
+from werkzeug.security import generate_password_hash
+
+# Настройки хранятся одним объектом, отдельно от встроенных параметров Flask.
+CONFIG_KEY: Final = 'app.config'
 
 def token_hash(value: str) -> str:
-	"""Вернуть SHA-256 токена или пароля для поиска сессий и их отзыва.
-	
-	Хеш проверки пароля создаётся отдельно через Werkzeug; это не его замена."""
+	"""Вернуть стабильный SHA-256 токена или пароля для поиска и отзыва сессий."""
 	return hashlib.sha256(value.encode()).hexdigest()
 
-class AppConfig(TypedDict):
-	"""Проверенные настройки приложения. Пароль TOML сюда не переносится открытым текстом.
-	
-	DATABASE — абсолютный путь SQLite; PASSWORD_HASH — хеш Werkzeug;
-	PASSWORD_FINGERPRINT — стабильный признак пароля для отзыва сессий;
-	MAX_LOGIN_ATTEMPTS — число попыток входа с одного IP за 15 минут."""
-	DATABASE: str
-	PASSWORD_HASH: str
-	PASSWORD_FINGERPRINT: str
-	MAX_LOGIN_ATTEMPTS: int
+@dataclass(frozen=True, slots=True)
+class AppConfig:
+	"""Проверенные настройки; исходный пароль в объекте не сохраняется.
+
+	Хеш Werkzeug проверяет пароль, а стабильный fingerprint отзывает сессии.
+	Эти значения выполняют разные задачи и не восстанавливаются друг из друга.
+	"""
+
+	database: Path
+	password_hash: str
+	password_fingerprint: str
+	max_login_attempts: int = 5
+
+	@classmethod
+	def from_password(
+		cls, database: Path, password: str, max_login_attempts: int = 5
+	) -> 'AppConfig':
+		"""Создать настройки с хешем проверки и стабильным отпечатком пароля."""
+		return cls(
+			database,
+			generate_password_hash(password),
+			token_hash(password),
+			max_login_attempts
+		)
+
+def _section(data: Mapping[str, object], name: str) -> Mapping[str, object]:
+	"""Получить таблицу TOML или сообщить о неверном типе секции."""
+	section = data.get(name, {})
+	if not isinstance(section, dict):
+		raise ValueError(f'Секция [{name}] должна быть таблицей TOML')
+	return cast(Mapping[str, object], section)
 
 def load(root: Path) -> tuple[AppConfig, str, int]:
-	"""Прочитать config.toml относительно root и вернуть настройки, адрес и порт.
-	
-	При отсутствии файла создать его из примера и поднять ValueError с подсказкой.
-	Пустой пароль разрешён. Относительный путь базы отсчитывается от root."""
+	"""Прочитать настройки и вернуть объект приложения, адрес и порт.
+
+	При первом запуске создать config.toml с правами 600 и вывести подсказку.
+	Пустой пароль разрешён; относительный путь базы отсчитывается от root.
+	"""
 	path = root / 'config.toml'
 	if not path.exists():
 		with path.open('x', encoding='utf-8') as file:
@@ -41,36 +66,30 @@ def load(root: Path) -> tuple[AppConfig, str, int]:
 		)
 
 	with path.open('rb') as file:
-		config = tomllib.load(file)
+		data = tomllib.load(file)
 
-	auth = config.get('auth', {})
-	password, max_attempts = auth.get('password', ''), auth.get('max_attempts', 5)
+	auth = _section(data, 'auth')
+	password = auth.get('password', '')
+	max_attempts = auth.get('max_attempts', 5)
 	if not isinstance(password, str):
 		raise ValueError('Задайте пароль в config.toml: [auth] → password')
 	elif len(password) > 512:
 		raise ValueError('Пароль слишком длинный: не более 512 символов')
+	elif type(max_attempts) is not int or max_attempts <= 0:
+		raise ValueError('auth.max_attempts должен быть целым числом больше 0')
 
-	if type(max_attempts) is not int:
-		raise ValueError('Проверьте auth.max_attempts в config.toml')
-	elif max_attempts <= 0:
-		raise ValueError('Максимальное количество попыток входа должно быть больше 0')
-	
-	server = config.get('server', {})
+	server = _section(data, 'server')
 	host, port = server.get('host', '0.0.0.0'), server.get('port', 8080)
 	if not isinstance(host, str) or not host or type(port) is not int or not 1 <= port <= 65535:
 		raise ValueError('Проверьте server.host и server.port в config.toml')
-	
-	database = config.get('storage', {}).get('database', 'data/budget.sqlite3')
+
+	storage = _section(data, 'storage')
+	database = storage.get('database', 'data/budget.sqlite3')
 	if not isinstance(database, str) or not database:
 		raise ValueError('Укажите путь storage.database в config.toml')
 
-	return {
-		'DATABASE': str((root / database).resolve()),
-		'PASSWORD_HASH': generate_password_hash(password),
-		'PASSWORD_FINGERPRINT': token_hash(password),
-		'MAX_LOGIN_ATTEMPTS': max_attempts
-	}, host, port
+	return AppConfig.from_password((root / database).resolve(), password, max_attempts), host, port
 
 def get() -> AppConfig:
-	"""Вернуть настройки активного приложения; вызывать внутри контекста Flask."""
-	return cast(AppConfig, current_app.config)
+	"""Вернуть единый объект настроек из активного контекста Flask."""
+	return cast(AppConfig, current_app.extensions[CONFIG_KEY])

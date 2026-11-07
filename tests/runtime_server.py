@@ -1,19 +1,15 @@
 """Вспомогательный HTTP-сервер: python -m tests.runtime_server DATABASE PORT."""
 
 import sys
+from pathlib import Path
 
 from waitress.server import create_server
-from werkzeug.security import generate_password_hash
 
-from app import init
+from app import config, init
 
 def main(database_path: str, port: int) -> None:
 	"""Создать временное приложение и обслуживать HTTP до завершения процесса родителем."""
-	app = init({
-		'DATABASE': database_path,
-		'PASSWORD_HASH': generate_password_hash('smoke-test'),
-		'MAX_LOGIN_ATTEMPTS': 5,
-	})
+	app = init(config.AppConfig.from_password(Path(database_path), 'smoke-test'))
 	server = create_server(app, host='127.0.0.1', port=port)
 	print('READY', flush=True)
 	server.run()

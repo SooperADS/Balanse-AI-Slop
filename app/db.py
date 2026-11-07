@@ -1,26 +1,33 @@
-"""Одно соединение SQLite на контекст Flask с включёнными внешними ключами."""
+"""Соединение SQLite на контекст Flask и создание отсутствующих таблиц."""
 
 import sqlite3
-
+from pathlib import Path
 from typing import cast
-from flask import current_app, g
+
+from flask import g
+
+from . import config
 
 def get() -> sqlite3.Connection:
-	"""Вернуть соединение текущего контекста, создав его при первом обращении.
-	
-	Строки доступны по именам столбцов; запись фиксируется вызывающим кодом
-	через контекстный менеджер соединения. Соединение хранится в flask.g."""
-	if 'db' not in g:
-		db = sqlite3.connect(current_app.config['DATABASE'], timeout=10)
-		db.row_factory = sqlite3.Row
-		db.execute('PRAGMA foreign_keys = ON')
-		g.db = db
-	return cast(sqlite3.Connection, g.db)
+	"""Переиспользовать соединение запроса с Row и включёнными внешними ключами.
+
+	Изменения фиксирует вызывающий код через контекстный менеджер соединения.
+	"""
+	connection = cast(sqlite3.Connection | None, g.get('db'))
+	if connection is None:
+		connection = sqlite3.connect(config.get().database, timeout=10)
+		connection.row_factory = sqlite3.Row
+		connection.execute('PRAGMA foreign_keys = ON')
+		g.db = connection
+	return connection
+
+def initialize() -> None:
+	"""Создать каталог и отсутствующие таблицы; существующие данные сохраняются."""
+	config.get().database.parent.mkdir(parents=True, exist_ok=True)
+	get().executescript(Path(__file__).with_name('schema.sql').read_text(encoding='utf-8'))
 
 def close(_error: BaseException | None = None) -> None:
-	"""Закрыть соединение при завершении контекста, если оно было открыто.
-	
-	_error передаётся Flask как причина завершения и на закрытие не влияет."""
-	db: sqlite3.Connection | None = g.pop('db', None)
-	if db is not None:
-		db.close()
+	"""Закрыть соединение при выходе из контекста; _error передаётся Flask."""
+	connection = cast(sqlite3.Connection | None, g.pop('db', None))
+	if connection is not None:
+		connection.close()

@@ -55,9 +55,9 @@
 				endif %}
 			</tr>
 		</thead>
-		<tbody>{% for entry in entries %}<tr{% if entry.planned %} class="planned-row"{% endif %}>
+		<tbody>{% for entry in entries %}{% set planned = entry.is_planned(g.now) %}<tr{% if planned %} class="planned-row"{% endif %}>
 				<td class="entry-title"><div class="entry-title-content"><span class="transaction-icon {{ entry.kind }}">{{ icon(entry.kind) }}</span>
-					<div><span class="comment">{{ entry.comment }}</span><small>{{ {'income':'Доход', 'expense':'Расход', 'transfer':'Трансфер'}[entry.kind] }}{% if entry.planned %} · <span class="planned-badge">Запланировано</span>{% endif %}</small></div></div>
+					<div><span class="comment">{{ entry.comment }}</span><small>{{ {'income':'Доход', 'expense':'Расход', 'transfer':'Трансфер'}[entry.kind] }}{% if planned %} · <span class="planned-badge">Запланировано</span>{% endif %}</small></div></div>
 				</td>
 				<td class="entry-labels"><span class="category-label">{{ entry.category }}</span>
 					<div class="tag-list">{% for tag in entry.tags %}<span class="tag">#{{ tag.name }}</span>{% endfor

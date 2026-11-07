@@ -19,7 +19,7 @@
 				{{ label }}
 			</span>
 			<strong class="{{ kind }}">
-				{{ sign }}{{ group.totals[kind]|money }}
+				{{ sign }}{{ (group.totals|attr(kind))|money }}
 				<span> {{ symbols[currency] }}</span>
 			</strong>
 			<small>{{ title }} · {{ currency }}</small>

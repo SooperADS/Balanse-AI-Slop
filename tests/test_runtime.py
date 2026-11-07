@@ -49,24 +49,27 @@ class RuntimeTest(unittest.TestCase):
 
 			self.assertEqual((self.root / 'config.toml').stat().st_mode & 0o777, 0o600)
 			cfg, _, _ = load_config()
-			self.assertTrue(check_password_hash(cfg['PASSWORD_HASH'], ''))
+			self.assertTrue(check_password_hash(cfg.password_hash, ''))
 
 		text = '[auth]\npassword="my secret"\n[server]\nhost="127.0.0.1"\nport=8081\n'
 		config, host, port = self.config(text)
 
 		self.assertEqual((host, port), ('127.0.0.1', 8081))
-		self.assertEqual(config['DATABASE'], str(self.root / 'data/budget.sqlite3'))
+		self.assertEqual(config.database, self.root / 'data/budget.sqlite3')
 		self.assertTrue(check_password_hash(
-			config['PASSWORD_HASH'], 'my secret'
+			config.password_hash, 'my secret'
 		))
 
 		same, _, _ = self.config(text)
 		self.assertEqual(
-			same['PASSWORD_FINGERPRINT'], config['PASSWORD_FINGERPRINT']
+			same.password_fingerprint, config.password_fingerprint
 		)
-		self.assertNotEqual(same['PASSWORD_HASH'], config['PASSWORD_HASH'])
+		self.assertNotEqual(same.password_hash, config.password_hash)
 		for bad in (
 			'[auth]\npassword=42',
+			'auth = false', 'server = []', 'storage = 42',
+			'[auth]\npassword=""\nmax_attempts=0',
+			'[auth]\npassword=""\nmax_attempts=true',
 			'[auth]\npassword="' + 'x' * 513 + '"',
 			text.replace('8081', '0'),
 			text.replace('8081', 'true')):

@@ -120,7 +120,7 @@ svg {
 	display: inline-block
 }
 
-/* Текстовые модификаторы: .muted — пояснение, .accent — основной акцент, .eyebrow — надзаголовок. */
+/* Текстовые модификаторы: .muted – пояснение, .accent – основной акцент, .eyebrow – надзаголовок. */
 .muted {
 	color: var(--muted);
 	font-size: 13px
@@ -409,7 +409,7 @@ main {
 	transform: translateY(-1px)
 }
 
-/* Варианты кнопок: .primary — основное действие, .secondary — вторичное, .danger — удаление. */
+/* Варианты кнопок: .primary – основное действие, .secondary – вторичное, .danger – удаление. */
 .primary {
 	background: var(--accent);
 	color: #1c2718;
@@ -740,7 +740,7 @@ main {
 	font-size: 10px
 }
 
-/* Семантические цвета сумм: доход — зелёный, расход — тёплый красный. */
+/* Семантические цвета сумм: доход – зелёный, расход – тёплый красный. */
 .income {
 	color: var(--green)
 }
@@ -758,7 +758,7 @@ main {
 	overflow: hidden
 }
 
-/* Две колонки разбивок по категориям и тегам; на телефоне — одна. */
+/* Две колонки разбивок по категориям и тегам; на телефоне – одна. */
 .analysis-grid {
 	display: grid;
 	grid-template-columns: 1fr 1fr;
@@ -1336,7 +1336,7 @@ legend {
 	padding: 0 23px
 }
 
-/* Одна строка справочника; .default-category — виртуальное отсутствие категории. */
+/* Одна строка справочника; .default-category – виртуальное отсутствие категории. */
 .library-item {
 	padding: 15px 0;
 	display: flex;
@@ -1394,7 +1394,7 @@ legend {
 	height: 12px
 }
 
-/* Сообщения результата запроса: .notice — успех, .error-notice — серверная ошибка ввода. */
+/* Сообщения результата запроса: .notice – успех, .error-notice – серверная ошибка ввода. */
 .notice,
 .error-notice {
 	padding: 13px 17px;

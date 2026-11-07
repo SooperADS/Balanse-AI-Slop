@@ -1,11 +1,11 @@
-{% extends 'base.html' %}{% block title %}{{ 'Изменить' if entry else 'Добавить' }} запись — Баланс{% endblock %}
+{% extends 'base.html' %}{% block title %}{{ 'Изменить' if entry else 'Добавить' }} запись – Баланс{% endblock %}
 {% block content %}
 <div class="page-heading">
 	<div>
 		<span class="eyebrow">ЖУРНАЛ ФИНАНСОВ</span>
 		<h1>{{ 'Изменить запись' if entry else 'Новая запись' }}<span class="accent">.</span></h1>
 		<p class="muted">
-			{{ g.profile.name }} · {{ 'Обновите сведения об операции' if entry else 'Каждая запись — шаг к
+			{{ g.profile.name }} · {{ 'Обновите сведения об операции' if entry else 'Каждая запись – шаг к
 			порядку в финансах' }}
 		</p>
 	</div>
@@ -43,18 +43,28 @@
 		<fieldset class="transfer-fields" data-transfer-fields>
 			<legend>Конвертация валют</legend>
 			<div class="form-grid amount-row">
-				<label>Сумма получения<input name="destination_amount"
-						value="{{ values.get('destination_amount', '') }}" inputmode="decimal" maxlength="24"
-						placeholder="0,00"></label>
-				<label>Получаемая валюта<select name="destination_currency">
-						{% for c in currencies %}<option{% if values.get('destination_currency', 'USD' )==c %}
-							selected{% endif %}>{{ c }}</option>{% endfor %}
-					</select></label>
+				<label>Сумма получения
+					<input name="destination_amount" value="{{ values.get('destination_amount', '') }}"
+						inputmode="decimal" maxlength="24" placeholder="0,00">
+				</label>
+				<label>
+					Получаемая валюта
+					<select name="destination_currency">
+						{% for c in currencies %}
+						<option{% if values.get('destination_currency', 'USD' )==c %} selected{% endif %}>{{ c }}
+							</option>
+							{% endfor %}
+					</select>
+				</label>
 			</div>
 			<label>Курс: количество получаемой валюты за 1 единицу исходной
 				<input data-exchange-rate inputmode="decimal" maxlength="64" placeholder="Например, 90 или 0,01111111">
 			</label>
-			<output class="transfer-preview helper" data-transfer-preview aria-live="polite">Измените курс или сумму получения — второе поле пересчитается автоматически. Сумма получения округляется до копейки/цента.</output>
+			<output class="transfer-preview helper" data-transfer-preview aria-live="polite">
+				Измените курс или сумму
+				получения – второе поле пересчитается автоматически. Сумма получения округляется до
+				копейки/цента.
+			</output>
 		</fieldset>
 		<div class="form-grid">
 			<label>Дата и время <span class="required">*</span>

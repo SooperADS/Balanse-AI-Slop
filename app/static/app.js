@@ -198,7 +198,7 @@ if (entryForm) {
 					rate.dataset.computed = 'true';
 				} else {
 					if (changed === destination) { rate.value = ''; numerator = null; }
-					preview.value = 'Укажите курс или сумму получения — второе поле вычислится автоматически.';
+					preview.value = 'Укажите курс или сумму получения – второе поле вычислится автоматически.';
 					return;
 				}
 			} else if (denominator !== null) {
@@ -312,7 +312,7 @@ function validateField(field, show) {
 	return !message;
 }
 
-// Первичная проверка — при blur/submit; повторная — при редактировании посещённых полей.
+// Первичная проверка – при blur/submit; повторная – при редактировании посещённых полей.
 document.querySelectorAll('form').forEach(form => {
 	/** @type {NodeListOf<ValidatedField>} */
 	const fields = form.querySelectorAll('input:not([type="hidden"]):not([type="radio"]):not([type="checkbox"]):not([type="submit"]):not([type="button"]), select, textarea');

@@ -31,7 +31,8 @@
 	</div>
 	<form method="get" class="stats-filter" data-period-form>
 		<div class="period-tabs">
-			{% for value, label in [('day','День'), ('week','Неделя'), ('month','Месяц'), ('year','Год'), ('range','Период')] %}
+			{% for value, label in [('day','День'), ('week','Неделя'), ('month','Месяц'), ('year','Год'),
+			('range','Период')] %}
 			<label>
 				<input type="radio" name="period" value="{{ value }}" {% if period==value %} checked{% endif %}>
 				<span>{{ label }}</span>
@@ -52,7 +53,8 @@
 			<button class="button secondary">Показать</button>
 		</div>
 	</form>
-	<p class="statistics-dates muted">{{ stats.start_date|calendar_date }} — {{ stats.end_date|calendar_date }} включительно{% if period == 'week' %} · Последние 7 дней{% endif %}</p>
+	<p class="statistics-dates muted">{{ stats.start_date|calendar_date }} – {{ stats.end_date|calendar_date }}
+		включительно{% if period == 'week' %} · Последние 7 дней{% endif %}</p>
 	{{ statistics_group(stats.current, currency, 'Текущие', False) }}
 	{{ statistics_group(stats.planned, currency, 'Запланированные', True) }}
 </section>

@@ -8,6 +8,7 @@ import unittest
 from collections.abc import Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
+from dataclasses import fields, replace
 from typing import TypeAlias, cast
 
 from flask.testing import FlaskClient
@@ -15,10 +16,11 @@ from werkzeug.test import TestResponse
 from werkzeug.datastructures import MultiDict
 from werkzeug.security import generate_password_hash
 
-from app import init, COOKIE
+from app import APP, init, COOKIE
 from app import db
 from app import config
 from app.domain import (
+	Entry, EntryTag, Totals, TransferTotals, StatisticsGroup,
 	ValidationError,
 	fetch_balances,
 	fetch_entries_for,
@@ -34,14 +36,12 @@ class BudgetTest(unittest.TestCase):
 	def setUp(self) -> None:
 		"""Создать временную базу, войти и добавить исходный профиль с капиталом."""
 		self.temp = tempfile.TemporaryDirectory()
-		self.config = {
-			'TESTING': True,
-			'DATABASE': str(Path(self.temp.name) / 'test.sqlite3'),
-			'PASSWORD_HASH': generate_password_hash(
-				'test-password', method='pbkdf2:sha256:1000'
-			),
-			'PASSWORD_FINGERPRINT': config.token_hash('test-password')}
-		self.app = init(self.config)
+		self.config = config.AppConfig(
+			database=Path(self.temp.name) / 'test.sqlite3',
+			password_hash=generate_password_hash('test-password', method='pbkdf2:sha256:1000'),
+			password_fingerprint=config.token_hash('test-password'),
+		)
+		self.app = init(self.config, testing=True)
 		self.client = self.app.test_client()
 
 		self.login()
@@ -222,7 +222,7 @@ class BudgetTest(unittest.TestCase):
 		self.assertIn('Без категории', self.client.get('/entries?category_id=none').get_data(as_text=True))
 		self.assertEqual(self.post('/library/categories/add', {'name': 'Без категории'}).status_code, 422)
 		with self.app.app_context():
-			self.assertEqual(fetch_entries_for(1)[0]['category'], 'Без категории')
+			self.assertEqual(fetch_entries_for(1)[0].category, 'Без категории')
 
 	def test_tag_deletion_keeps_entry(self) -> None:
 		"""Проверить каскадное удаление связей тега с сохранением операций."""
@@ -254,20 +254,20 @@ class BudgetTest(unittest.TestCase):
 				entries, 'day', '2020-05-12', 'RUB'
 			)
 
-			self.assertEqual(day['current']['totals'], {'income': 0, 'expense': 1234})
-			self.assertEqual([r['expense'] for r in day['current']['tags']], [1234, 1234])
+			self.assertEqual(day.current.totals, Totals(income=0, expense=1234))
+			self.assertEqual([r.expense for r in day.current.tags], [1234, 1234])
 			
 			month = calc_statistics(
 				entries, 'month', '2020-05', 'RUB'
 			)
 			
-			self.assertEqual(month['current']['totals'], {'income': 5000, 'expense': 1234})
+			self.assertEqual(month.current.totals, Totals(income=5000, expense=1234))
 			self.assertEqual(calc_statistics(
 				entries, 'year', '2019', 'RUB'
-			)['current']['totals']['expense'], 500)
+			).current.totals.expense, 500)
 			self.assertEqual(calc_statistics(
 				entries, 'day', '2020-05-12', 'USD'
-			)['current']['totals']['expense'], 8000)
+			).current.totals.expense, 8000)
 
 		for url in (
 			'/?period=unknown',
@@ -462,21 +462,18 @@ class BudgetTest(unittest.TestCase):
 		self.assertEqual(self.client.get('/entries').status_code, 302)
 		
 		# A process restart preserves sessions; a password change invalidates them.
-		restarted = init(self.config).test_client()
+		restarted = init(self.config, testing=True).test_client()
 		outside_cookie = outsider.get_cookie(COOKIE)
 		assert outside_cookie is not None
 		restarted.set_cookie(COOKIE, outside_cookie.value)
 		
 		self.assertEqual(restarted.get('/entries').status_code, 200)
-		changed = {
-			**self.config,
-			'PASSWORD_FINGERPRINT': config.token_hash('new-password'),
-			'PASSWORD_HASH': generate_password_hash(
-				'new-password', method='pbkdf2:sha256:1000'
-			)
-		}
+		changed = replace(
+			self.config, password_fingerprint=config.token_hash('new-password'),
+			password_hash=generate_password_hash('new-password', method='pbkdf2:sha256:1000'),
+		)
 
-		updated = init(changed).test_client()
+		updated = init(changed, testing=True).test_client()
 		updated.set_cookie(COOKIE, outside_cookie.value)
 		self.assertEqual(updated.get('/entries').status_code, 302)
 
@@ -515,7 +512,7 @@ class BudgetTest(unittest.TestCase):
 		with self.app.app_context():
 			entries = fetch_entries_for(1)
 			self.assertEqual(len(entries), 1)
-			self.assertEqual(entries[0]['destination_amount'], 1000)
+			self.assertEqual(entries[0].destination_amount, 1000)
 			self.assertEqual(fetch_balances(1, entries), {'RUB': 10000, 'USD': 2000, 'EUR': 0})
 		for currency in ('RUB', 'USD'):
 			page = self.client.get('/entries', query_string={'currency': currency}).get_data(as_text=True)
@@ -537,8 +534,8 @@ class BudgetTest(unittest.TestCase):
 		)).status_code, 302)
 		with self.app.app_context():
 			entries = fetch_entries_for(1)
-			self.assertEqual(entries[0]['amount'], -10000)
-			self.assertEqual(entries[0]['destination_amount'], 900000)
+			self.assertEqual(entries[0].amount, -10000)
+			self.assertEqual(entries[0].destination_amount, 900000)
 			self.assertEqual(fetch_balances(1, entries), {'RUB': 1000000, 'USD': -9000, 'EUR': 0})
 			columns = {row['name'] for row in db.get().execute('PRAGMA table_info(entries)')}
 			self.assertNotIn('exchange_rate', columns)
@@ -592,14 +589,14 @@ class BudgetTest(unittest.TestCase):
 			entries = fetch_entries_for(1)
 			rub = calc_statistics(entries, 'day', '2020-05-12', 'RUB')
 			usd = calc_statistics(entries, 'day', '2020-05-12', 'USD')
-			self.assertEqual(rub['current']['totals'], {'income': 1200, 'expense': 0})
-			self.assertEqual(rub['current']['transfers'], {'sent': 90000, 'received': 0, 'count': 1})
-			self.assertEqual(rub['current']['tags'], [])
-			self.assertEqual(rub['current']['categories'][0]['income'], 1200)
-			self.assertEqual(usd['current']['totals'], {'income': 0, 'expense': 0})
-			self.assertEqual(usd['current']['transfers'], {'sent': 0, 'received': 1000, 'count': 1})
-			self.assertEqual(usd['current']['categories'], [])
-			self.assertEqual(calc_statistics(entries, 'day', '2020-05-12', 'EUR')['current']['count'], 0)
+			self.assertEqual(rub.current.totals, Totals(income=1200, expense=0))
+			self.assertEqual(rub.current.transfers, TransferTotals(sent=90000, received=0, count=1))
+			self.assertEqual(rub.current.tags, [])
+			self.assertEqual(rub.current.categories[0].income, 1200)
+			self.assertEqual(usd.current.totals, Totals(income=0, expense=0))
+			self.assertEqual(usd.current.transfers, TransferTotals(sent=0, received=1000, count=1))
+			self.assertEqual(usd.current.categories, [])
+			self.assertEqual(calc_statistics(entries, 'day', '2020-05-12', 'EUR').current.count, 0)
 		for currency in ('RUB', 'USD'):
 			page = self.client.get('/?period=day&date=2020-05-12&currency=' + currency)
 			self.assertEqual(page.status_code, 200)
@@ -613,10 +610,10 @@ class BudgetTest(unittest.TestCase):
 		with self.app.app_context():
 			entries = fetch_entries_for(1)
 			stats = calc_statistics(entries, 'range', '2019-12-31', 'RUB', '2020-02-29')
-			self.assertEqual(stats['current']['count'], 3)
-			self.assertEqual(stats['current']['totals']['expense'], 300)
-			self.assertEqual((stats['start_date'], stats['end_date']), ('2019-12-31', '2020-02-29'))
-			self.assertEqual(calc_statistics(entries, 'range', '2020-02-29', 'RUB', '2020-02-29')['current']['count'], 1)
+			self.assertEqual(stats.current.count, 3)
+			self.assertEqual(stats.current.totals.expense, 300)
+			self.assertEqual((stats.start_date.isoformat(), stats.end_date.isoformat()), ('2019-12-31', '2020-02-29'))
+			self.assertEqual(calc_statistics(entries, 'range', '2020-02-29', 'RUB', '2020-02-29').current.count, 1)
 		for start, end in (('2020-02-30', '2020-03-01'), ('2020-03-01', '2020-02-29'), ('2020-01-01', 'bad')):
 			self.assertEqual(self.client.get('/', query_string={'period': 'range', 'date': start, 'end_date': end}).status_code, 400)
 		page = self.client.get('/?period=range&date=2019-12-31&end_date=2020-02-29')
@@ -629,9 +626,9 @@ class BudgetTest(unittest.TestCase):
 			self.post('/entries/new', self.entry(amount='1', occurred_at=timestamp))
 		with self.app.app_context():
 			stats = calc_statistics(fetch_entries_for(1), 'week', '2020-01-03', 'RUB')
-			self.assertEqual((stats['start_date'], stats['end_date']), ('2019-12-28', '2020-01-03'))
-			self.assertEqual(stats['current']['totals']['expense'], 200)
-			self.assertEqual(stats['current']['count'], 2)
+			self.assertEqual((stats.start_date.isoformat(), stats.end_date.isoformat()), ('2019-12-28', '2020-01-03'))
+			self.assertEqual(stats.current.totals.expense, 200)
+			self.assertEqual(stats.current.count, 2)
 		page = self.client.get('/?period=week&date=2020-01-03')
 		self.assertEqual(page.status_code, 200)
 		self.assertIn('Последние 7 дней', page.get_data(as_text=True))
@@ -672,7 +669,7 @@ class BudgetTest(unittest.TestCase):
 		self.assertEqual(self.post('/entries/new', self.transfer(occurred_at=future)).status_code, 302)
 		with self.app.app_context():
 			entries = fetch_entries_for(1)
-			self.assertTrue(all(e['planned'] for e in entries))
+			self.assertTrue(all(e.is_planned(datetime.now()) for e in entries))
 			self.assertEqual(fetch_balances(1, entries), {'RUB': 100000, 'USD': 1000, 'EUR': 0})
 			self.assertEqual(fetch_balances(1, entries, now=datetime.now() + timedelta(days=3)), {'RUB': 5000, 'USD': 2000, 'EUR': 0})
 		page = self.client.get('/entries').get_data(as_text=True)
@@ -689,15 +686,15 @@ class BudgetTest(unittest.TestCase):
 		with self.app.app_context():
 			entries = fetch_entries_for(1)
 			stats = calc_statistics(entries, 'day', '2020-05-12', 'RUB', now=datetime(2020,5,12,12,30,0))
-			self.assertEqual(stats['current']['totals'], {'income': 2000, 'expense': 0})
-			self.assertEqual(stats['planned']['totals'], {'income': 0, 'expense': 1000})
-			self.assertEqual(stats['planned']['transfers']['sent'], 90000)
-			self.assertEqual(stats['planned']['count'], 2)
-			self.assertEqual(stats['current']['count'], 1)
+			self.assertEqual(stats.current.totals, Totals(income=2000, expense=0))
+			self.assertEqual(stats.planned.totals, Totals(income=0, expense=1000))
+			self.assertEqual(stats.planned.transfers.sent, 90000)
+			self.assertEqual(stats.planned.count, 2)
+			self.assertEqual(stats.current.count, 1)
 			after = calc_statistics(entries, 'day', '2020-05-12', 'RUB', now=datetime(2020,5,12,12,30,1))
-			self.assertEqual(after['planned']['count'], 0)
-			self.assertEqual(after['current']['count'], 3)
-			self.assertEqual(after['current']['totals']['expense'], 1000)
+			self.assertEqual(after.planned.count, 0)
+			self.assertEqual(after.current.count, 3)
+			self.assertEqual(after.current.totals.expense, 1000)
 
 	def test_signed_amounts_and_nullable_category(self) -> None:
 		"""Проверить знаковое хранение сумм, вычисление типа и nullable-категорию."""
@@ -709,8 +706,36 @@ class BudgetTest(unittest.TestCase):
 		self.assertEqual(self.scalar('SELECT count(*) FROM categories'), 0)
 		with self.app.app_context():
 			entries = fetch_entries_for(1)
-			self.assertEqual([e['kind'] for e in entries], ['expense', 'income'])
+			self.assertEqual([e.kind for e in entries], ['expense', 'income'])
 		self.assertIn('value="1.23"', self.client.get('/entries/2/edit').get_data(as_text=True))
+
+	def test_init_reuses_the_only_application(self) -> None:
+		"""Повторная настройка возвращает APP и не регистрирует маршруты заново."""
+		rules = list(APP.url_map.iter_rules())
+		self.assertIs(self.app, APP)
+		self.assertIs(init(self.config, testing=True), APP)
+		self.assertEqual(list(APP.url_map.iter_rules()), rules)
+		with APP.app_context():
+			self.assertIs(config.get(), self.config)
+		self.assertEqual(self.scalar('SELECT count(*) FROM profiles'), 1)
+
+	def test_models_store_only_needed_fields(self) -> None:
+		"""Производные свойства не дублируются в слотах и реагируют на исходные данные."""
+		self.post('/entries/new', self.entry())
+		with self.app.app_context():
+			entry = fetch_entries_for(1)[0]
+		self.assertFalse({'kind', 'planned', 'profile_id'} & {f.name for f in fields(Entry)})
+		self.assertNotIn('entry_id', {f.name for f in fields(EntryTag)})
+		self.assertNotIn('count', {f.name for f in fields(StatisticsGroup)})
+		self.assertFalse(hasattr(entry, '__dict__'))
+		self.assertEqual(entry.kind, 'expense')
+		self.assertEqual(replace(entry, amount=100).kind, 'income')
+		self.assertTrue(entry.is_planned(datetime(2020, 5, 12, 12, 29)))
+		self.assertFalse(entry.is_planned(datetime(2020, 5, 12, 12, 30)))
+		group = StatisticsGroup([entry])
+		self.assertEqual(group.count, 1)
+		group.entries.clear()
+		self.assertEqual(group.count, 0)
 
 if __name__ == '__main__':
 	unittest.main()

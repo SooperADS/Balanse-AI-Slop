@@ -1,13 +1,11 @@
 """Запуск HTTP-сервера Waitress: python main.py после установки requirements.txt."""
 
 import sys
-import tomllib
 
 from pathlib import Path
 from waitress import serve
 
-from app import init
-from app import config
+from app import config, init
 
 # Корень для config.toml, примера настроек и относительного пути базы.
 ROOT: Path = Path(__file__).resolve().parent
@@ -17,7 +15,7 @@ def main() -> int:
 	try:
 		cfg_obj, host, port = config.load(ROOT)
 		app = init(cfg_obj)
-	except (OSError, ValueError, tomllib.TOMLDecodeError) as error:
+	except (OSError, ValueError) as error:
 		print(f'Не удалось запустить приложение: {error}', file=sys.stderr)
 		return 1
 

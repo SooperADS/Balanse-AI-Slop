@@ -4,10 +4,11 @@ import re
 import sqlite3
 import calendar
 
-from datetime import date, datetime
+from datetime import date, datetime, time
+from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation, localcontext
 from collections.abc import Iterable, Mapping
-from typing import Literal, TypeAlias, TypedDict, cast
+from typing import Literal, TypeAlias, cast
 
 from werkzeug.datastructures import MultiDict
 from werkzeug.exceptions import NotFound
@@ -19,70 +20,129 @@ CURRENCIES: tuple[str, ...] = ('RUB', 'USD', 'EUR')
 # Символы валют используются только для отображения в шаблонах.
 SYMBOLS: dict[str, str] = {'RUB': '₽', 'USD': '$', 'EUR': '€'}
 
+# Категория по умолчанию
+DEFAULT_CATEGORY_NAME = 'Без категории'
+
 # Вычисляемый UI-тип; в таблице entries такого столбца нет.
 EntryKind: TypeAlias = Literal['income', 'expense', 'transfer']
 
-class EntryTag(TypedDict):
-	"""Тег в представлении записи: идентификаторы связи и отображаемое имя."""
-	entry_id: int
+@dataclass(frozen=True, slots=True)
+class EntryTag:
+	"""Тег записи; идентификатор родительской записи здесь не дублируется."""
+
 	id: int
 	name: str
 
-class Entry(TypedDict):
-	"""Запись для шаблонов и расчётов, дополненная данными справочников.
-	
-	amount хранит знаковую сумму в сотых; destination_amount положительна.
-	kind, category, tags и planned вычисляются при чтении и не являются
-	столбцами entries. category_id=None означает «Без категории»."""
+@dataclass(slots=True)
+class Entry:
+	"""Запись журнала с точной суммой и единожды разобранным временем.
+
+	Справочное имя категории загружается JOIN, теги — отдельным общим запросом.
+	Тип и плановое состояние не сохраняются в объекте.
+	"""
+
 	id: int
-	profile_id: int
-	kind: EntryKind
 	currency: str
 	amount: int
-	destination_currency: str | None
-	destination_amount: int | None
-	occurred_at: str
+	occurred_at: datetime
 	comment: str
 	category_id: int | None
 	category: str
-	tags: list[EntryTag]
-	planned: bool
+	destination_currency: str | None = None
+	destination_amount: int | None = None
+	tags: list[EntryTag] = field(default_factory=list)
 
-class Breakdown(TypedDict):
-	"""Суммы доходов и расходов одной категории или тега в положительных сотых."""
+	@property
+	def kind(self) -> EntryKind:
+		"""Вычислить UI-тип за O(1), без обращения к БД."""
+		if self.destination_currency is not None:
+			return 'transfer'
+		return 'income' if self.amount > 0 else 'expense'
+
+	def is_planned(self, now: datetime) -> bool:
+		"""Сравнить с единым моментом запроса; равенство означает текущую запись."""
+		return self.occurred_at > now
+
+	@classmethod
+	def from_row(
+		cls,
+		row: sqlite3.Row, *,
+		category: str = DEFAULT_CATEGORY_NAME,
+		tags: list[EntryTag] | None = None,
+	) -> 'Entry':
+		"""Преобразовать строку SQLite без дополнительных запросов и profile_id."""
+		return cls(
+			id=row['id'],
+			currency=row['currency'],
+			amount=row['amount'],
+			occurred_at=datetime.fromisoformat(row['occurred_at']),
+			comment=row['comment'],
+			category_id=row['category_id'],
+			category=category,
+			destination_currency=row['destination_currency'],
+			destination_amount=row['destination_amount'],
+			tags=tags if tags is not None else [],
+		)
+
+@dataclass(slots=True)
+class Totals:
+	"""Уже рассчитанные положительные суммы доходов и расходов в сотых."""
+
+	income: int = 0
+	expense: int = 0
+
+@dataclass(slots=True)
+class Breakdown:
+	"""Положительные суммы одной категории или тега в выбранной валюте."""
+
 	name: str
-	income: int
-	expense: int
+	income: int = 0
+	expense: int = 0
 
-class StatisticsGroup(TypedDict):
-	"""Показатели текущих либо плановых записей в одной выбранной валюте.
-	
-	totals содержит income/expense, transfers — sent/received/count.
-	Трансферы исключены из totals и разбивок по категориям и тегам."""
-	totals: dict[str, int]
-	count: int
+@dataclass(slots=True)
+class TransferTotals:
+	"""Суммы и число трансферов; восстановление count потребовало бы обхода."""
+
+	sent: int = 0
+	received: int = 0
+	count: int = 0
+
+@dataclass(slots=True)
+class StatisticsGroup:
+	"""Группа записей с агрегатами, вычисленными за один проход."""
+
 	entries: list[Entry]
-	categories: list[Breakdown]
-	tags: list[Breakdown]
-	transfers: dict[str, int]
+	totals: Totals = field(default_factory=Totals)
+	transfers: TransferTotals = field(default_factory=TransferTotals)
+	categories: list[Breakdown] = field(default_factory=list)
+	tags: list[Breakdown] = field(default_factory=list)
 
-class Statistics(TypedDict):
-	"""Две независимые группы статистики и включительные границы периода ISO."""
+	@property
+	def count(self) -> int:
+		"""Число записей за O(1), без отдельного сохранённого счётчика."""
+		return len(self.entries)
+
+@dataclass(slots=True)
+class Statistics:
+	"""Независимые текущая/плановая группы и включительные даты периода."""
+
 	current: StatisticsGroup
 	planned: StatisticsGroup
-	start_date: str
-	end_date: str
+	start_date: date
+	end_date: date
 
 class ValidationError(ValueError):
 	"""Ошибка пользовательского ввода, которую можно показать в форме."""
 	pass
 
+# ====================
+
 def to_money(raw: str | int | float | Decimal, *, capital: bool = False) -> int:
 	"""Разобрать сумму в целые копейки/центы без округления.
 	
 	Допускаются запятая, точка и пробелы-разделители; максимум два знака.
-	Для капитала разрешены ноль и отрицательные значения, для операций —
-	только положительные. При неверном формате или размере — ValidationError."""
+	Для капитала разрешены ноль и отрицательные значения, для операций –
+	только положительные. При неверном формате или размере – ValidationError."""
 	value = str(raw).strip().replace(' ', '').replace('\u00a0', '').replace(',', '.')
 	pattern: str = r'-?\d+(?:\.\d{1,2})?' if capital else r'\d+(?:\.\d{1,2})?'
 	if not re.fullmatch(pattern, value):
@@ -122,10 +182,8 @@ def fetch_owned(table: str, item_id: int | str | None, profile_id: int) -> sqlit
 	return cast(sqlite3.Row, row)
 
 def _to_amounts(capitals: Mapping[str, str]) -> dict[str, int]:
-	"""Преобразовать начальный капитал каждой валюты в сотые; отсутствующий — ноль."""
-	return {
-		c: to_money(capitals.get(c, '0'), capital=True) for c in CURRENCIES
-	}
+	"""Преобразовать начальный капитал каждой валюты в сотые; отсутствующий – ноль."""
+	return { c: to_money(capitals.get(c, '0'), capital=True) for c in CURRENCIES }
 
 def effective_rate(amount: int, destination_amount: int) -> str:
 	"""Вычислить курс получения к модулю списания для показа с 8 значащими цифрами.
@@ -172,7 +230,7 @@ def save_entry(
 	Форма передаёт положительный amount и UI-тип kind; в БД сохраняется знак.
 	Для трансфера обязательны другая валюта и destination_amount; курс игнорируется.
 	Будущие даты разрешены. Категория и теги проверяются на принадлежность профилю.
-	При редактировании связи тегов полностью заменяются; ошибки — ValidationError."""
+	При редактировании связи тегов полностью заменяются; ошибки – ValidationError."""
 	if entry_id is not None:
 		fetch_owned('entries', entry_id, profile_id)
 
@@ -180,6 +238,7 @@ def save_entry(
 	kind, currency = form.get('kind'), form.get('currency')
 	if kind not in ('income', 'expense', 'transfer') or currency not in CURRENCIES:
 		raise ValidationError('Выберите тип операции и валюту')
+
 	destination_currency: str | None = None
 	destination_amount: int | None = None
 	if kind == 'transfer':
@@ -249,131 +308,144 @@ def delete_category(category_id: int, profile_id: int) -> None:
 	не использует ON DELETE SET NULL, чтобы не обнулять обязательный profile_id."""
 	fetch_owned('categories', category_id, profile_id)
 	with db.get() as dbo:
-		dbo.execute('UPDATE entries SET category_id=NULL WHERE category_id=? AND profile_id=?', (category_id, profile_id))
-		dbo.execute('DELETE FROM categories WHERE id=? AND profile_id=?', (category_id, profile_id))
+		dbo.execute(
+			'UPDATE entries SET category_id = NULL '
+			'WHERE category_id = ? AND profile_id = ?',
+			(category_id, profile_id)
+		)
+		dbo.execute(
+			'DELETE FROM categories WHERE id = ? AND profile_id = ?',
+			(category_id, profile_id)
+		)
 
-def fetch_entries_for(profile_id: int, now: datetime | None = None) -> list[Entry]:
-	"""Вернуть журнал профиля от новых записей к старым вместе с тегами.
-	
-	kind определяется суммой и получаемой валютой; planned — сравнением
-	с now или временем сервера. Параметр now позволяет фиксировать момент в тестах."""
-	current_time = (now or datetime.now()).isoformat(timespec='seconds')
-	dbo = db.get()
-	entries = cast(list[Entry], [dict(r) for r in dbo.execute(
-		"SELECT e.*, COALESCE(c.name, 'Без категории') AS category "
+def fetch_entries_for(profile_id: int) -> list[Entry]:
+	"""Загрузить журнал и теги двумя запросами независимо от числа записей."""
+	connection = db.get()
+	rows = connection.execute(
+		"SELECT e.id, e.currency, e.amount, e.occurred_at, e.comment, e.category_id, "
+		"COALESCE(c.name, 'Без категории'), e.destination_currency, e.destination_amount "
 		'FROM entries e '
 		'LEFT JOIN categories c ON c.id = e.category_id AND c.profile_id = e.profile_id '
-		'WHERE e.profile_id = ? '
-		'ORDER BY e.occurred_at DESC, e.id DESC',
-		(profile_id,)
-	)])
-
+		'WHERE e.profile_id = ? ORDER BY e.occurred_at DESC, e.id DESC',
+		(profile_id,),
+	).fetchall()
 	tags: dict[int, list[EntryTag]] = {}
-	for row in dbo.execute(
+
+	for row in connection.execute(
 		'SELECT et.entry_id, t.id, t.name FROM entry_tags et '
-		'JOIN tags t ON t.id = et.tag_id AND t.profile_id = et.profile_id '
-		'WHERE et.profile_id = ? ORDER BY t.name',
-		(profile_id,)
+		'JOIN tags t ON t.id=et.tag_id AND t.profile_id=et.profile_id '
+		'WHERE et.profile_id=? ORDER BY t.name', (profile_id,),
 	):
-		tags.setdefault(row['entry_id'], []).append(cast(EntryTag, dict(row)))
-	
-	for entry in entries:
-		entry['tags'] = tags.get(entry['id'], [])
-		entry['kind'] = 'transfer' if entry['destination_currency'] is not None else 'income' if entry['amount'] > 0 else 'expense'
-		entry['planned'] = entry['occurred_at'] > current_time
-	return entries
+		tags.setdefault(row['entry_id'], []).append(EntryTag(row['id'], row['name']))
+
+	# Порядок столбцов задан SELECT явно: индексный доступ к Row не ищет имена.
+	return [Entry(
+		id=row[0],
+		currency=row[1],
+		amount=row[2],
+		occurred_at=datetime.fromisoformat(row[3]),
+		comment=row[4],
+		category_id=row[5],
+		category=row[6],
+		destination_currency=row[7],
+		destination_amount=row[8],
+		tags=tags.get(row[0], []),
+	) for row in rows]
 
 def fetch_balances(
-	profile_id: int,
-	entries: Iterable[Entry],
-	now: datetime | None = None
+	profile_id: int, entries: Iterable[Entry], now: datetime | None = None,
 ) -> dict[str, int]:
-	"""Рассчитать капитал плюс движения, время которых уже наступило.
-	
-	Обе стороны будущего трансфера исключаются. now задаёт момент расчёта;
-	по умолчанию используется локальное время сервера."""
-	current_time = (now or datetime.now()).isoformat(timespec='seconds')
+	"""Прибавить наступившие движения к капиталу; будущий трансфер исключается целиком."""
+	current_time = now or datetime.now()
 	result: dict[str, int] = {
 		r['currency']: r['amount'] for r in db.get().execute(
-			'SELECT * FROM capitals WHERE profile_id = ?', (profile_id,)
+			'SELECT currency, amount FROM capitals WHERE profile_id = ?', (profile_id,),
 		)
 	}
 
 	for entry in entries:
-		if entry['occurred_at'] > current_time:
+		if entry.is_planned(current_time):
 			continue
-		result[entry['currency']] += entry['amount']
-		if entry['destination_currency'] is not None:
-			assert entry['destination_amount'] is not None
-			result[entry['destination_currency']] += entry['destination_amount']
+
+		result[entry.currency] += entry.amount
+		if entry.destination_currency is not None:
+			assert entry.destination_amount is not None
+			result[entry.destination_currency] += entry.destination_amount
+
 	return result
 
 def _summarize(entries: list[Entry], currency: str) -> StatisticsGroup:
-	"""Собрать показатели одной группы уже отфильтрованных записей и валюты.
-	
-	Операция с несколькими тегами входит в сумму каждого из них."""
-	totals = {
-		k: sum(abs(e['amount']) for e in entries if e['kind'] == k) for k in ('income', 'expense')
-	}
-	transfers = {'sent': 0, 'received': 0, 'count': 0}
-	groups: dict[str, dict[str, Breakdown]] = {'categories': {}, 'tags': {}}
-	
-	for e in entries:
-		if e['kind'] == 'transfer':
-			transfers['count'] += 1
-			if e['currency'] == currency:
-				transfers['sent'] += abs(e['amount'])
+	"""За один проход рассчитать группу; одна запись может войти в несколько тегов."""
+	result = StatisticsGroup(entries)
+	categories: dict[str, Breakdown] = {}
+	tags: dict[str, Breakdown] = {}
+
+	for entry in entries:
+		amount = entry.amount
+		if entry.destination_currency is not None:
+			result.transfers.count += 1
+			if entry.currency == currency:
+				result.transfers.sent -= amount
 			else:
-				assert e['destination_amount'] is not None
-				transfers['received'] += e['destination_amount']
+				assert entry.destination_amount is not None
+				result.transfers.received += entry.destination_amount
 			continue
+
+		if amount > 0:
+			result.totals.income += amount
+		else:
+			result.totals.expense -= amount
+
 		for group, labels in (
-			('categories', [e['category']]),
-			('tags', [t['name'] for t in e['tags']])
+			(categories, [entry.category]),
+			(tags, [tag.name for tag in entry.tags])
 		):
 			for label in labels:
-				bucket = groups[group].setdefault(
-					label, {'name': label, 'income': 0, 'expense': 0}
-				)
-				bucket[e['kind']] += abs(e['amount'])
+				bucket = group.get(label)
+				if bucket is None:
+					bucket = group[label] = Breakdown(label)
+				if amount > 0:
+					bucket.income += amount
+				else:
+					bucket.expense -= amount
 
-	return {
-		'totals': totals,
-		'count': len(entries),
-		'entries': entries,
-		'transfers': transfers,
-		'categories': sorted(
-			groups['categories'].values(),
-			key=lambda r: r['income'] + r['expense'], reverse=True
-		),
-		'tags': sorted(
-			groups['tags'].values(), key=lambda r: r['income'] + r['expense'], reverse=True
-		),
-	}
+	result.categories = sorted(
+		categories.values(), key=lambda row: row.income + row.expense, reverse=True
+	)
+	result.tags = sorted(
+		tags.values(), key=lambda row: row.income + row.expense, reverse=True
+	)
+	return result
 
 def calc_statistics(
 	entries: Iterable[Entry],
 	period: str,
 	selected: str,
 	currency: str,
-	end_selected: str | None = None, now: datetime | None = None,
+	end_selected: str | None = None,
+	now: datetime | None = None,
 ) -> Statistics:
-	"""Отобрать валюту и период, затем разделить показатели по моменту now.
-	
-	Запись с временем, равным now, считается текущей. Валюта трансфера
-	может быть как исходной, так и получаемой. Границы периода включительны."""
+	"""Одним проходом отобрать валюту и включительный период, разделив группы по now."""
 	start, end = period_bounds(period, selected, end_selected)
-	current_time = (now or datetime.now()).isoformat(timespec='seconds')
-	matched = [
-		e for e in entries if start.isoformat() <= e['occurred_at'][:10] <= end.isoformat()
-		and (e['currency'] == currency or e['destination_currency'] == currency)
-	]
+	start_time = datetime.combine(start, time.min)
+	end_time = datetime.combine(end, time.max)
+	current_time = now or datetime.now()
+	current: list[Entry] = []
+	planned: list[Entry] = []
 
-	return {
-		'current': _summarize([e for e in matched if e['occurred_at'] <= current_time], currency),
-		'planned': _summarize([e for e in matched if e['occurred_at'] > current_time], currency),
-		'start_date': start.isoformat(), 'end_date': end.isoformat(),
-	}
+	for entry in entries:
+		if (not start_time <= entry.occurred_at <= end_time
+			or currency not in (entry.currency, entry.destination_currency)):
+			continue
+
+		(planned if entry.is_planned(current_time) else current).append(entry)
+
+	return Statistics(
+		_summarize(current, currency),
+		_summarize(planned, currency),
+		start,
+		end
+	)
 
 def period_bounds(
 	period: str, selected: str, end_selected: str | None = None
@@ -381,18 +453,21 @@ def period_bounds(
 	"""Вернуть включительные даты периода или поднять ValidationError.
 	
 	selected: YYYY-MM-DD для дня, недели и диапазона, YYYY-MM для месяца,
-	YYYY для года. Неделя — последние 7 дней до selected включительно.
+	YYYY для года. Неделя – последние 7 дней до selected включительно.
 	Для range дополнительно нужен end_selected в формате YYYY-MM-DD."""
+
 	try:
 		if period in ('day', 'week', 'range'):
 			if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', selected):
 				raise ValueError()
+
 			start = end = date.fromisoformat(selected)
 			if period == 'week':
 				start = date.fromordinal(max(1, end.toordinal() - 6))
 			elif period == 'range':
 				if not end_selected or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', end_selected):
 					raise ValueError()
+
 				end = date.fromisoformat(end_selected)
 		elif period == 'month':
 			start = datetime.strptime(selected, '%Y-%m').date().replace(day=1)
