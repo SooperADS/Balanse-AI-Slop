@@ -1,5 +1,6 @@
 # Скопируйте в config.toml и задайте свой пароль.
 [auth]
+max_attempts = 5
 password = ""
 
 [server]

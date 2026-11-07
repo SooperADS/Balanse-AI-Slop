@@ -1,0 +1,10 @@
+{
+	"include": [ "app.py", "budget", "tests" ],
+	"exclude": [ ".venv", "**/__pycache__" ],
+	"venvPath": ".",
+	"venv": ".venv",
+	"pythonVersion": "3.14",
+	"typeCheckingMode": "standard",
+	"reportUnusedImport": "warning",
+	"reportUnnecessaryIsInstance": "warning"
+}
