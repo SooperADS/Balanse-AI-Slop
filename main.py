@@ -23,7 +23,7 @@ def main() -> int:
 	print(f'Домашняя бухгалтерия: http://{host}:{port}', flush=True)
 	public_link_base = cfg.public_link_base
 	if cfg.is_public_host and public_link_base:
-		print(f'С другого устройства: {public_link_base}', flush=True)
+		print(f'С другого устройства: {cfg.get_invite_link()}', flush=True)
 	
 	serve(app, host=host, port=port, clear_untrusted_proxy_headers=True)
 	return 0

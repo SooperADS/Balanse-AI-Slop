@@ -8,7 +8,7 @@ import tomllib
 from flask import current_app
 from pathlib import Path
 from typing import Final, cast
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from werkzeug.security import generate_password_hash
@@ -99,6 +99,22 @@ class AppConfig:
 		"""Returns:
 		    Стандартный префикс для публичной ссылки на веб приложение."""
 		return f'http://{self.public_node}' if self.public_node != '' else None
+
+	def get_invite_link(self, profile_id: int | None = None) -> str:
+		"""Собирает ссылку-приглашения в приложение.
+
+		Args:
+			platform_id: ID профиля.
+		Returns:
+			Созданная ссылка приглашения.
+		Raises:
+			sqlite3.Error: Не удалось сохранить сессию или выбранный профиль.
+		"""
+		params: dict = { 'password': self.password }
+		if profile_id:
+			params['profile_id'] = profile_id
+
+		return f'{self.public_link_base}/invite?' + urlencode(params)
 
 	@classmethod
 	def from_password(

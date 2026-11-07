@@ -2,6 +2,7 @@
 
 import sqlite3
 import secrets
+import segno
 import hmac
 import time
 
@@ -9,8 +10,6 @@ from datetime import date, datetime, time as day_time, timezone
 from dataclasses import dataclass
 from collections.abc import Mapping
 from typing import Any, Literal
-from urllib.parse import urlencode
-import segno
 from flask import Flask, abort, g, redirect, render_template, request, url_for
 from flask.typing import ResponseReturnValue
 from werkzeug.exceptions import HTTPException
@@ -351,6 +350,7 @@ def _authorize(profile_id: int | None = None) -> Response:
 				(config.token_hash(token), config.get().password_fingerprint,
 				 secrets.token_urlsafe(32), profile_id),
 			)
+
 	response = redirect(url_for('overview'))
 	_set_session_cookie(response, token)
 	response.delete_cookie(LOGIN_COOKIE)
@@ -368,7 +368,7 @@ def login() -> ResponseReturnValue:
 		return redirect(url_for('overview'))
 	status = 200
 	if request.method == 'POST':
-		status = _check_password(request.form.get('password', ''))
+		status: int = _check_password(request.form.get('password', ''))
 		if status == 200:
 			return _authorize()
 	return render_template('login.html'), status
@@ -385,13 +385,18 @@ def invite() -> ResponseReturnValue:
 	    sqlite3.Error: Не удалось проверить доступ или сохранить сессию.
 	"""
 	profile_id = request.args.get('profile_id', type=int)
-	if profile_id is None or not 0 < profile_id <= 9223372036854775807 or 'password' not in request.args:
+	if ((profile_id and not 0 < profile_id <= 9223372036854775807) 
+		or 'password' not in request.args):
 		abort(400, description='В ссылке отсутствует пароль или указан неверный профиль')
+
 	status = _check_password(request.args['password'])
 	if status != 200:
 		return render_template('login.html'), status
-	if dbm.get().execute('SELECT id FROM profiles WHERE id=?', (profile_id,)).fetchone() is None:
+	elif profile_id and dbm.get().execute(
+		'SELECT id FROM profiles WHERE id = ?', (profile_id,)
+	).fetchone() is None:
 		abort(404)
+
 	return _authorize(profile_id)
 
 @APP.get('/profiles/share')
@@ -406,9 +411,8 @@ def share_profile() -> str:
 	settings = config.get()
 	link, qr_image, qr_error = '', '', ''
 	if settings.public_node:
-		link = f'{settings.public_link_base}/invite?' + urlencode({
-			'profile_id': g.profile['id'], 'password': settings.password,
-		})
+		assert settings.public_link_base
+		link = settings.get_invite_link(g.profile["id"])
 
 		try:
 			qr_image = segno.make_qr(link, error='L').svg_data_uri(
