@@ -1,0 +1,36 @@
+{% extends 'base.html' %}{% block content %}<div class="page-heading">
+	<div><span class="eyebrow">ПОРЯДОК В ДЕТАЛЯХ</span>
+		<h1>Категории и теги<span class="accent">.</span></h1>
+		<p class="muted">Ваши правила для доходов и расходов · {{ g.profile.name }}</p>
+	</div>
+</div>
+<div class="library-grid">
+	{% for kind, title, items, hint in [('categories','Категории', categories, 'Одна категория на операцию. Удалённая
+	категория заменяется на «Без категории».'), ('tags','Теги', tags, 'Несколько тегов на операцию. При удалении тега
+	записи сохраняются.')] %}<section class="panel">
+		<div class="panel-heading">
+			<h2>{{ title }}</h2><span class="count-badge">{{ items|length }}</span>
+		</div>
+		<p class="library-hint muted">{{ hint }}</p>
+		<form class="library-add" method="post" action="{{ url_for('change_library', kind=kind, action='add') }}">{{
+			csrf() }}<label class="sr-only" for="new-{{ kind }}">Название {{ 'категории' if kind == 'categories' else
+				'тега' }}</label><input id="new-{{ kind }}" name="name" required maxlength="80"
+				placeholder="{{ 'Новая категория' if kind == 'categories' else 'Новый тег' }}"><button
+				class="button primary" aria-label="Добавить {{ 'категорию' if kind == 'categories' else 'тег' }}">{{
+				icon('plus') }}</button></form>
+		<div class="library-items">{% for item in items %}<div class="library-item">{% if kind == 'categories' and
+				item.is_default %}<div class="default-category"><span>{{ item.name }}</span><small>{{ icon('lock') }} По
+						умолчанию</small></div>{% else %}<form class="library-rename" method="post"
+					action="{{ url_for('change_library', kind=kind, action='rename') }}">{{ csrf() }}<input
+						type="hidden" name="id" value="{{ item.id }}"><label class="sr-only"
+						for="{{ kind }}-{{ item.id }}">Название {{ item.name }}</label><input
+						id="{{ kind }}-{{ item.id }}" name="name" value="{{ item.name }}" required
+						maxlength="80"><button class="icon-button" title="Сохранить название"
+						aria-label="Сохранить название {{ item.name }}">{{ icon('edit') }}</button></form>
+				<form method="post" action="{{ url_for('change_library', kind=kind, action='delete') }}"
+					data-confirm="{{ 'Удалить категорию «' ~ item.name ~ '»? Её записи перейдут в «Без категории».' if kind == 'categories' else 'Удалить тег «' ~ item.name ~ '»? Его связи с записями исчезнут.' }}">
+					{{ csrf() }}<input type="hidden" name="id" value="{{ item.id }}"><button
+						class="icon-button danger-text" title="Удалить" aria-label="Удалить {{ item.name }}">{{
+						icon('trash') }}</button></form>{% endif %}
+			</div>{% else %}<div class="empty compact">Тегов пока нет. Добавьте первый выше.</div>{% endfor %}</div>
+	</section>{% endfor %}</div>{% endblock %}

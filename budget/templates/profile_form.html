@@ -1,0 +1,43 @@
+{% extends 'base.html' %}{% block content %}<div class="page-heading">
+	<div><span class="eyebrow">ЛИЧНОЕ ПРОСТРАНСТВО</span>
+		<h1>{{ 'Новый профиль' if creating else 'Настройки профиля' }}<span class="accent">.</span></h1>
+		<p class="muted">{{ 'Создайте отдельный бюджет со своими категориями и тегами' if creating else 'Название и
+			начальный капитал вашего журнала' }}</p>
+	</div>{% if not creating %}<a class="button secondary" href="{{ url_for('new_profile') }}">{{ icon('plus') }} Новый
+		профиль</a>{% endif %}
+</div>
+<section class="panel form-panel">
+	<form method="post" class="stack">{{ csrf() }}<label>Название профиля<input name="name"
+				value="{{ values.get('name', '') }}" required maxlength="80" placeholder="Например, Семейный бюджет"
+				autofocus></label>
+		<div class="form-divider"></div>
+		<div>
+			<h2>Начальный капитал</h2>
+			<p class="muted">Суммы на момент начала ведения журнала. Все доходы и расходы прибавляются к ним или
+				вычитаются из них.</p>
+		</div>
+		<div class="capital-grid">{% for c in currencies %}<label>{{ c }} · {{ symbols[c] }}<input name="{{ c }}"
+					value="{{ values.get(c, '0.00') }}" inputmode="text" required maxlength="24"></label>{% endfor %}
+		</div>
+		<p class="helper">Можно указать отрицательную сумму, если журнал начинается с долга. Каждая валюта учитывается
+			отдельно. Изменение начального капитала пересчитывает баланс без записи в журнале.</p>
+		<div class="form-actions"><button class="button primary">{{ 'Создать профиль' if creating else 'Сохранить
+				изменения' }}</button>{% if g.get('profile') %}<a class="button secondary"
+				href="{{ url_for('overview') }}">Отмена</a>{% endif %}</div>
+	</form>
+</section>
+{% if not creating %}<section class="panel form-panel access-panel">
+	<h2>Доступ к приложению</h2>
+	<p class="muted">Вход сохраняется в этом браузере до выхода или смены пароля приложения.</p>
+	<form method="post" action="{{ url_for('logout') }}">{{ csrf() }}<button class="button secondary">{{ icon('logout')
+			}} Выйти на этом устройстве</button></form>
+</section>
+<section class="panel danger-panel form-panel">
+	<div>
+		<h2>Удаление профиля</h2>
+		<p class="muted">Профиль «{{ g.profile.name }}», все его операции, категории и теги будут удалены навсегда.</p>
+	</div>
+	<form method="post" action="{{ url_for('delete_profile') }}"
+		data-confirm="Удалить профиль «{{ g.profile.name }}» и все его данные? Это действие необратимо.">{{ csrf()
+		}}<button class="button danger">{{ icon('trash') }} Удалить профиль</button></form>
+</section>{% endif %}{% endblock %}

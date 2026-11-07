@@ -1,0 +1,66 @@
+{% from 'macros.html' import icon, csrf with context %}
+<!doctype html>
+<html lang="ru">
+
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="color-scheme" content="dark">
+	<meta name="theme-color" content="#111513">
+	<title>{% block title %}Баланс — домашняя бухгалтерия{% endblock %}</title>
+	<link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+	<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+	<script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</head>
+<body{% if not g.get('auth') %} class="auth-body" {% endif %}>
+	{% if g.get('auth') %}<aside class="sidebar"><a class="brand" href="{{ url_for('overview') }}"><span
+				class="brand-mark">б<span>·</span></span><span>баланс<small>ДОМАШНЯЯ БУХГАЛТЕРИЯ</small></span></a>
+		<div class="nav-label">ВАШИ ФИНАНСЫ</div>
+		<nav aria-label="Основная навигация">
+			{% for endpoint, key, label, glyph in [('overview','overview','Обзор','overview'),
+			('entry_list','entries','Операции','entries'), ('library','library','Категории и теги','tags'),
+			('settings','settings','Настройки','settings')] %}<a href="{{ url_for(endpoint) }}"
+				class="nav-item {{ 'active' if active == key }}" {% if active==key %} aria-current="page" {% endif %}>{{
+				icon(glyph) }}<span>{{ label }}</span>{% if active == key %}<span class="nav-dot"></span>{% endif
+				%}</a>{% endfor %}
+		</nav>
+		<div class="sidebar-bottom">
+			<div class="local-note"><span class="status-dot"></span>Личный бюджет<small>Всё начинается с
+					баланса.</small></div>
+			<form method="post" action="{{ url_for('logout') }}">{{ csrf() }}<button class="logout">{{ icon('logout') }}
+					Выйти</button></form>
+		</div>
+	</aside>
+	<div class="workspace">
+		<header class="topbar"><span class="topbar-caption">Домашняя бухгалтерия <span>/</span> <strong>{{
+					{'overview':'Обзор', 'entries':'Операции', 'library':'Категории и теги',
+					'settings':'Настройки'}.get(active, 'Профиль') }}</strong></span>
+			<div class="profile-control"><span class="avatar">{{ g.profile.name[:1]|upper if g.get('profile') else 'Б'
+					}}</span>{% if profiles %}<form method="post" action="{{ url_for('switch_profile') }}"
+					class="profile-switch">{{ csrf() }}<label class="sr-only" for="profile-switch">Текущий
+						профиль</label><select id="profile-switch" name="profile_id" data-profile-switch>{% for profile
+						in profiles %}<option value="{{ profile.id }}" {% if g.get('profile') and
+							profile.id==g.profile.id %} selected{% endif %}>{{ profile.name }}</option>{% endfor
+						%}</select><button class="small-button profile-submit">Выбрать</button></form>{% else
+				%}<span>Первый профиль</span>{% endif %}<a class="icon-button" href="{{ url_for('new_profile') }}"
+					aria-label="Добавить профиль" title="Добавить профиль">{{ icon('plus') }}</a></div>
+		</header>
+		<main id="main">
+			{% else %}<main class="auth-main" id="main">{% endif %}
+				{% if notice %}<div class="notice" role="status">{{ notice }}</div>{% endif %}{% if g.get('error') %}
+				<div class="error-notice" role="alert">{{ g.error }}</div>{% endif %}
+				{% block content %}{% endblock %}
+			</main>{% if g.get('auth') %}<footer class="footer"><span>Баланс <span class="footer-dot">·</span> Домашняя
+					бухгалтерия</span><span>RUB / USD / EUR</span></footer>
+	</div>{% endif %}
+	<dialog id="confirmation">
+		<form method="dialog"><span class="eyebrow">ПОДТВЕРЖДЕНИЕ</span>
+			<h2>Удалить данные?</h2>
+			<p id="confirmation-text"></p>
+			<div class="form-actions"><button value="cancel" class="button secondary" autofocus>Отмена</button><button
+					value="confirm" class="button danger">Удалить</button></div>
+		</form>
+	</dialog>
+	</body>
+
+</html>

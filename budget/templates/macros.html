@@ -1,0 +1,88 @@
+{% macro csrf() -%}<input type="hidden" name="csrf_token" value="{{ g.csrf }}">{%- endmacro %}
+{% macro icon(name, cls='') -%}
+<svg class="icon {{ cls }}" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+	stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+	{% if name == 'overview' %}
+	<rect x="3" y="3" width="7" height="7" rx="1.5" />
+	<rect x="14" y="3" width="7" height="7" rx="1.5" />
+	<rect x="3" y="14" width="7" height="7" rx="1.5" />
+	<rect x="14" y="14" width="7" height="7" rx="1.5" />
+	{% elif name == 'entries' %}
+	<path d="M7 3h10a2 2 0 0 1 2 2v16l-3-2-4 2-4-2-3 2V5a2 2 0 0 1 2-2Z" />
+	<path d="M9 8h6M9 12h6" />
+	{% elif name == 'tags' %}
+	<path d="m20 13-7 7a2 2 0 0 1-3 0l-7-7V3h10l7 7a2 2 0 0 1 0 3Z" />
+	<circle cx="7.5" cy="7.5" r="1" />
+	{% elif name == 'settings' %}
+	<path d="M4 7h16M4 17h16" />
+	<circle cx="9" cy="7" r="3" fill="currentColor" />
+	<circle cx="15" cy="17" r="3" fill="currentColor" />
+	{% elif name == 'plus' %}
+	<path d="M12 5v14M5 12h14" />
+	{% elif name == 'income' %}
+	<path d="M7 17 17 7M7 7h10v10" />
+	{% elif name == 'expense' %}
+	<path d="m17 7-10 10M7 7v10h10" />
+	{% elif name == 'logout' %}
+	<path d="M9 4H4v16h5M9 12h12m-4-4 4 4-4 4" />
+	{% elif name == 'arrow' %}
+	<path d="M5 12h14m-5-5 5 5-5 5" />
+	{% elif name == 'edit' %}
+	<path d="m15 4 5 5M4 20l5-1L20 8a3.5 3.5 0 0 0-5-5L4 14Z" />
+	{% elif name == 'trash' %}
+	<path d="M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7" />
+	{% elif name == 'lock' %}
+	<rect x="5" y="10" width="14" height="11" rx="2" />
+	<path d="M8 10V6a4 4 0 0 1 8 0v4M12 15v2" />
+	{% elif name == 'wallet' %}
+	<rect x="3" y="5" width="18" height="15" rx="3" />
+	<path d="M3 9h18m-5 4h5v4h-5a2 2 0 0 1 0-4Z" />
+	{% endif %}
+</svg>
+{%- endmacro %}
+
+{% macro entry_table(entries, editable=False) %}
+<div class="table-wrap">
+	<table class="entries-table">
+		<thead>
+			<tr>
+				<th>Операция</th>
+				<th>Категория и теги</th>
+				<th>Дата и время</th>
+				<th class="align-right">Сумма</th>{% if editable %}<th><span class="sr-only">Действия</span></th>{%
+				endif %}
+			</tr>
+		</thead>
+		<tbody>{% for entry in entries %}<tr>
+				<td class="entry-title"><span class="transaction-icon {{ entry.kind }}">{{ icon(entry.kind) }}</span>
+					<div><span class="comment">{{ entry.comment }}</span><small>{{ 'Доход' if entry.kind == 'income'
+							else 'Расход' }}</small></div>
+				</td>
+				<td class="entry-labels"><span class="category-label">{{ entry.category }}</span>
+					<div class="tag-list">{% for tag in entry.tags %}<span class="tag">#{{ tag.name }}</span>{% endfor
+						%}</div>
+				</td>
+				<td class="entry-date">{{ entry.occurred_at|localdate }}</td>
+				<td class="entry-amount {{ entry.kind }}">{{ '+' if entry.kind == 'income' else '−' }}{{
+					entry.amount|money }} <span>{{ symbols[entry.currency] }}</span></td>
+				{% if editable %}<td class="entry-actions"><a class="icon-button"
+						href="{{ url_for('entry_form', entry_id=entry.id) }}"
+						aria-label="Изменить запись: {{ entry.comment }}" title="Изменить">{{ icon('edit') }}</a>
+					<form method="post" action="{{ url_for('delete_entry', entry_id=entry.id) }}"
+						data-confirm="Удалить запись без возможности восстановления?">{{ csrf() }}<button
+							class="icon-button danger-text" aria-label="Удалить запись: {{ entry.comment }}"
+							title="Удалить">{{ icon('trash') }}</button></form>
+				</td>{% endif %}
+			</tr>{% endfor %}</tbody>
+	</table>
+</div>
+{% endmacro %}
+
+{% macro breakdown(rows, currency, empty) %}
+{% if rows %}<div class="breakdown-head"><span>Название</span><span>Доходы</span><span>Расходы</span></div>
+<div class="breakdown-list">{% for row in rows %}<div class="breakdown-row"><strong>{{ row.name }}</strong><span
+			class="income">{{ row.income|money }} {{ symbols[currency] }}</span><span class="expense">{{
+			row.expense|money }} {{ symbols[currency] }}</span><progress value="{{ row.income + row.expense }}"
+			max="{{ rows[0].income + rows[0].expense }}" aria-label="Объём операций: {{ row.name }}"></progress></div>{%
+	endfor %}</div>{% else %}<div class="empty compact">{{ empty }}</div>{% endif %}
+{% endmacro %}
