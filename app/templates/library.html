@@ -32,12 +32,9 @@
 				{{icon('plus') }}
 			</button>
 		</form>
-		<div class="library-items">{% for item in items %}<div class="library-item">
-				{% if kind == 'categories' and item.is_default %}
-				<div class="default-category"><span>{{ item.name }}</span>
-					<small>{{ icon('lock') }} По умолчанию</small>
-				</div>
-				{% else %}
+		<div class="library-items">
+			{% if kind == 'categories' %}<div class="library-item"><div class="default-category"><span>Без категории</span><small>{{ icon('lock') }} По умолчанию</small></div></div>{% endif %}
+			{% for item in items %}<div class="library-item">
 				<form class="library-rename" method="post"
 					action="{{ url_for('change_library', kind=kind, action='rename') }}">
 					{{ csrf() }}
@@ -56,10 +53,10 @@
 					<button class="icon-button danger-text" title="Удалить" aria-label="Удалить {{ item.name }}">
 						{{ icon('trash') }}
 					</button>
-				</form>{% endif %}
+				</form>
 			</div>{% else %}
 			<div class="empty compact">
-				Тегов пока нет. Добавьте первый выше.
+				{{ 'Пользовательских категорий пока нет.' if kind == 'categories' else 'Тегов пока нет. Добавьте первый выше.' }}
 			</div>{% endfor %}
 		</div>
 	</section>{% endfor %}

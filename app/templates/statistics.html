@@ -1,0 +1,82 @@
+{% from 'macros.html' import icon, entry_table, breakdown with context %}
+{% macro statistics_group(group, currency, title, planned=False) %}
+<section class="statistics-group {{ 'planned-section' if planned }}">
+	<div class="section-heading">
+		<div>
+			<h2>{{ title }}</h2>
+			<p class="muted">{{ 'Будущие записи; пока не входят в текущий баланс' if planned else 'Записи, дата и время
+				которых уже наступили' }}</p>
+		</div>
+		<span class="count-badge">{{ group.count }}</span>
+	</div>
+	<div class="summary-grid">
+		{% for kind, label, sign in [('income','Доходы','+'), ('expense','Расходы','−')] %}
+		<article class="summary-card">
+			<span class="summary-label">
+				<span class="transaction-icon {{ kind }}">
+					{{ icon(kind) }}
+				</span>
+				{{ label }}
+			</span>
+			<strong class="{{ kind }}">
+				{{ sign }}{{ group.totals[kind]|money }}
+				<span> {{ symbols[currency] }}</span>
+			</strong>
+			<small>{{ title }} · {{ currency }}</small>
+		</article>
+		{% endfor %}
+		<article class="summary-card">
+			<span class="summary-label">
+				<span class="transaction-icon neutral">
+					{{ icon('wallet') }}
+				</span>
+				Разница
+			</span>
+			<strong>{{ (group.totals.income - group.totals.expense)|money }}
+				<span> {{ symbols[currency] }}</span>
+			</strong>
+			<small>{{ group.count }} операций · {{ currency }}</small>
+		</article>
+	</div>
+	<div class="transfer-summary">
+		<div>
+			<span class="transaction-icon transfer">{{ icon('transfer') }}</span>
+			<strong>Конвертация · {{ currency }}</strong>
+			<small>{{ group.transfers.count }} трансферов · Не входит в доходы и расходы</small>
+		</div>
+		<p>Списано <strong class="expense">−{{ group.transfers.sent|money }} {{ symbols[currency] }}</strong></p>
+		<p>Получено <strong class="income">+{{ group.transfers.received|money }} {{ symbols[currency] }}</strong></p>
+	</div>
+	<div class="analysis-grid">
+		<section class="panel">
+			<div class="panel-heading">
+				<h3>По категориям</h3>
+				<span class="count-badge">{{ group.categories|length }}</span>
+			</div>
+			{{ breakdown(group.categories, currency, 'Доходов и расходов в этой группе пока нет.') }}
+		</section>
+		<section class="panel">
+			<div class="panel-heading">
+				<h3>По тегам</h3>
+				<span class="count-badge">{{ group.tags|length }}</span>
+			</div>
+			{{ breakdown(group.tags, currency, 'Доходов и расходов с тегами в этой группе пока нет.') }}
+			<p class="panel-note">Операция с несколькими тегами учитывается в каждом из них.
+			</p>
+		</section>
+	</div>
+	<section class="panel recent-panel">
+		<div class="panel-heading">
+			<h3>{{ title }} записи за период</h3>
+			<a class="text-link" href="{{ url_for('entry_list') }}">
+				Все операции {{ icon('arrow') }}
+			</a>
+		</div>
+		{% if group.entries %}{{ entry_table(group.entries[:5]) }}{% else %}
+		<div class="empty compact">
+			Записей за выбранный период нет.
+		</div>
+		{% endif %}
+	</section>
+</section>
+{% endmacro %}

@@ -62,22 +62,6 @@ if (periodForm) {
 	}
 }
 
-// Advance the maximum time using the server's local clock, independently of
-// the phone's time zone. The server performs the authoritative validation.
-/** @type {NodeListOf<HTMLInputElement>} */
-const dateInputs = document.querySelectorAll('[data-now-max]');
-dateInputs.forEach(/** @param {HTMLInputElement} input @returns {void} */ input => {
-	/** @type {number} */
-	const initial = Date.parse(`${input.max}Z`);
-	/** @type {number} */
-	const started = performance.now();
-	if (Number.isFinite(initial)) {
-		setInterval(/** @returns {void} */() => {
-			input.max = new Date(initial + performance.now() - started).toISOString().slice(0, 19);
-		}, 1000);
-	}
-});
-
 /** @type {HTMLDialogElement | null} */
 const confirmation = document.querySelector('#confirmation');
 /** @type {HTMLFormElement | null} */
@@ -134,6 +118,13 @@ function formatFixed(value, scale) {
 	return `${value / factor}.${(value % factor).toString().padStart(scale, '0')}`;
 }
 
+
+/** @param {bigint} numerator @param {bigint} denominator @returns {string} */
+function formatRate(numerator, denominator) {
+	// Keep small rates visible; retain the exact rational separately for recalculation.
+	return formatFixed((numerator * 10n ** 36n + denominator / 2n) / denominator, 36).replace(/\.?0+$/, '');
+}
+
 /** @type {HTMLFormElement | null} */
 const entryForm = document.querySelector('[data-entry-form]');
 if (entryForm) {
@@ -148,71 +139,155 @@ if (entryForm) {
 	/** @type {HTMLSelectElement | null} */
 	const destinationCurrency = entryForm.querySelector('[name="destination_currency"]');
 	/** @type {HTMLInputElement | null} */
-	const rate = entryForm.querySelector('[name="exchange_rate"]');
-	/** @type {HTMLElement | null} */
-	const rateField = entryForm.querySelector('[data-rate-field]');
+	const rate = entryForm.querySelector('[data-exchange-rate]');
 	/** @type {HTMLOutputElement | null} */
 	const preview = entryForm.querySelector('[data-transfer-preview]');
 	/** @type {HTMLElement | null} */
 	const amountLabel = entryForm.querySelector('[data-source-amount-label]');
-	if (fields && source && sourceCurrency && destination && destinationCurrency && rate && rateField && preview) {
-		/** @returns {void} */
-		const updateTransfer = () => {
+	if (fields && source && sourceCurrency && destination && destinationCurrency && rate && preview) {
+		/** @type {bigint | null} */
+		let numerator = null;
+		/** @type {bigint | null} */
+		let denominator = null;
+		/** @param {EventTarget | null} changed @returns {void} */
+		const updateTransfer = changed => {
 			/** @type {HTMLInputElement | null} */
 			const kind = entryForm.querySelector('[name="kind"]:checked');
-			/** @type {HTMLInputElement | null} */
-			const mode = entryForm.querySelector('[name="transfer_mode"]:checked');
 			const transfer = kind?.value === 'transfer';
-			const byRate = mode?.value === 'rate';
 			fields.hidden = !transfer;
 			fields.disabled = !transfer;
+			destination.required = transfer;
+			rate.required = transfer;
 			if (amountLabel) amountLabel.textContent = transfer ? 'Сумма списания' : 'Сумма';
-			destination.required = transfer && !byRate;
-			destination.readOnly = byRate;
-			rateField.hidden = !byRate;
-			rate.disabled = !transfer || !byRate;
-			rate.required = transfer && byRate;
-			destinationCurrency.setCustomValidity('');
 			if (!transfer) return;
+			const amount = parseFixed(source.value, 2);
+			if (changed === rate) {
+				rate.dataset.computed = 'false';
+				numerator = parseFixed(rate.value, 8);
+				denominator = 100000000n;
+				if (!numerator) { preview.value = 'Укажите положительный курс, до 8 знаков после запятой.'; return; }
+			}
+			if (!amount) { preview.value = 'Укажите положительную сумму списания.'; return; }
+			if (changed === destination || changed === null || numerator === null) {
+				const received = parseFixed(destination.value, 2);
+				if (received) {
+					numerator = received;
+					denominator = amount;
+					rate.value = formatRate(numerator, denominator);
+					rate.dataset.computed = 'true';
+				} else {
+					if (changed === destination) { rate.value = ''; numerator = null; }
+					preview.value = 'Укажите курс или сумму получения — второе поле вычислится автоматически.';
+					return;
+				}
+			} else if (denominator !== null) {
+				const received = (amount * numerator + denominator / 2n) / denominator;
+				destination.value = formatFixed(received, 2);
+			}
 			if (sourceCurrency.value === destinationCurrency.value) {
-				destinationCurrency.setCustomValidity('Выберите две разные валюты');
 				preview.value = 'Исходная и получаемая валюты должны различаться.';
 				return;
 			}
-			const amount = parseFixed(source.value, 2);
-			if (!amount) {
-				preview.value = 'Укажите положительную сумму списания.';
-				if (byRate) destination.value = '';
-				return;
-			}
-			if (byRate) {
-				const scaledRate = parseFixed(rate.value, 8);
-				if (!scaledRate) {
-					destination.value = '';
-					preview.value = 'Укажите положительный курс, до 8 знаков после запятой.';
-					return;
-				}
-				const received = (amount * scaledRate + 50000000n) / 100000000n;
-				if (received <= 0n || received > 900000000000000000n) {
-					destination.value = '';
-					preview.value = 'Сумма получения должна быть не меньше копейки/цента и не превышать допустимый размер.';
-					return;
-				}
-				destination.value = formatFixed(received, 2);
-				preview.value = `${formatFixed(amount, 2).replace('.', ',')} ${sourceCurrency.value} → ${formatFixed(received, 2).replace('.', ',')} ${destinationCurrency.value}. Курс: 1 ${sourceCurrency.value} = ${rate.value} ${destinationCurrency.value}.`;
-			} else {
-				const received = parseFixed(destination.value, 2);
-				if (!received) {
-					preview.value = 'Укажите положительную сумму получения — курс будет вычислен автоматически.';
-					return;
-				}
-				const scaledRate = (received * 100000000n + amount / 2n) / amount;
-				const rateText = scaledRate === 0n ? 'менее 0,00000001' : formatFixed(scaledRate, 8).replace(/\.?0+$/, '').replace('.', ',');
-				preview.value = `Расчётный курс: 1 ${sourceCurrency.value} ≈ ${rateText} ${destinationCurrency.value}. Сохранятся обе указанные суммы.`;
-			}
+			preview.value = `${source.value} ${sourceCurrency.value} → ${destination.value} ${destinationCurrency.value}. Сохраняются обе суммы; курс вычисляется по ним.`;
 		};
-		entryForm.addEventListener('input', updateTransfer);
-		entryForm.addEventListener('change', updateTransfer);
-		updateTransfer();
+		entryForm.addEventListener('input', event => updateTransfer(event.target));
+		entryForm.addEventListener('change', event => updateTransfer(event.target));
+		updateTransfer(null);
+	}
+	/** @type {HTMLInputElement | null} */
+	const occurredAt = entryForm.querySelector('[name="occurred_at"]');
+	/** @type {HTMLElement | null} */
+	const plannedNote = entryForm.querySelector('[data-planned-note]');
+	const serverEpoch = Date.parse(`${entryForm.dataset.serverNow}Z`);
+	const openedAt = performance.now();
+	if (occurredAt && plannedNote && Number.isFinite(serverEpoch)) {
+		/** @returns {void} */
+		const updatePlannedNote = () => {
+			const now = new Date(serverEpoch + performance.now() - openedAt).toISOString().slice(0, 19);
+			const planned = occurredAt.value > now;
+			plannedNote.hidden = !planned;
+			plannedNote.textContent = 'Запланированная запись: войдёт в текущий баланс, когда наступят указанные дата и время.';
+		};
+		occurredAt.addEventListener('input', updatePlannedNote);
+		updatePlannedNote();
 	}
 }
+
+/** @typedef {HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement} ValidatedField */
+/** @type {number} */
+let errorCounter = 0;
+
+/** @param {ValidatedField} field @returns {string} */
+function validationMessage(field) {
+	if (field.matches(':disabled')) return '';
+	const value = field.value.trim();
+	if (field.required && !value) return 'Заполните это поле.';
+	if (field.name === 'name' && (!value || value.length > 80)) return 'Название должно содержать от 1 до 80 символов.';
+	if (field.name === 'comment' && (!value || value.length > 2000)) return 'Укажите комментарий длиной от 1 до 2000 символов.';
+	const capital = ['RUB', 'USD', 'EUR'].includes(field.name);
+	if (capital || field.name === 'amount' || field.name === 'destination_amount') {
+		const normalized = value.replace(/[\s\u00a0]/g, '').replace(',', '.');
+		const pattern = capital ? /^-?\d+(?:\.\d{1,2})?$/ : /^\d+(?:\.\d{1,2})?$/;
+		if (!pattern.test(normalized)) return 'Введите сумму с точностью до двух знаков после запятой.';
+		const absolute = normalized.replace(/^-/, '');
+		const amount = parseFixed(absolute, 2);
+		if (!capital && !amount) return 'Сумма должна быть больше нуля.';
+		if (amount !== null && amount > 900000000000000000n) return 'Слишком большая сумма.';
+	}
+	if (field.hasAttribute('data-exchange-rate')) {
+		const scale = field.dataset.computed === 'true' ? 36 : 8;
+		if (parseFixed(value, scale) === null) return 'Укажите положительный курс, до 8 знаков после запятой.';
+	}
+	if (field.name === 'destination_currency' && field.form) {
+		/** @type {HTMLSelectElement | null} */
+		const source = field.form.querySelector('[name="currency"]');
+		if (source?.value === field.value) return 'Выберите две разные валюты.';
+	}
+	if (field.name === 'name' && field.form?.action.includes('/library/categories') && value === 'Без категории') return 'Это название зарезервировано.';
+	if (field.name === 'to' || field.name === 'end_date') {
+		/** @type {HTMLInputElement | null} */
+		const start = field.form?.querySelector(field.name === 'to' ? '[name="from"]' : '[data-period-date]') ?? null;
+		if (value && start?.value && start.value > value) return 'Конечная дата должна быть не раньше начальной.';
+	}
+	if (field.validity.badInput || field.validity.typeMismatch || field.validity.rangeOverflow || field.validity.rangeUnderflow || field.validity.stepMismatch || field.validity.patternMismatch) return 'Проверьте формат и допустимое значение поля.';
+	return '';
+}
+
+/** @param {ValidatedField} field @param {boolean} show @returns {boolean} */
+function validateField(field, show) {
+	const message = validationMessage(field);
+	field.setCustomValidity(message);
+	if (show) {
+		field.dataset.touched = 'true';
+		field.classList.toggle('field-invalid', Boolean(message));
+		if (message) field.setAttribute('aria-invalid', 'true'); else field.removeAttribute('aria-invalid');
+		let errorId = field.dataset.errorId;
+		if (!errorId) {
+			errorId = `field-error-${++errorCounter}`;
+			field.dataset.errorId = errorId;
+			const error = document.createElement('span');
+			error.id = errorId;
+			error.className = 'field-error';
+			error.setAttribute('aria-live', 'polite');
+			field.insertAdjacentElement('afterend', error);
+			field.setAttribute('aria-describedby', `${field.getAttribute('aria-describedby') ?? ''} ${errorId}`.trim());
+		}
+		const error = document.getElementById(errorId);
+		if (error) { error.textContent = message; error.hidden = !message; }
+	}
+	return !message;
+}
+
+document.querySelectorAll('form').forEach(form => {
+	/** @type {NodeListOf<ValidatedField>} */
+	const fields = form.querySelectorAll('input:not([type="hidden"]):not([type="radio"]):not([type="checkbox"]):not([type="submit"]):not([type="button"]), select, textarea');
+	if (!fields.length) return;
+	form.noValidate = true;
+	fields.forEach(field => field.addEventListener('blur', () => validateField(field, true)));
+	form.addEventListener('input', () => fields.forEach(field => { if (field.dataset.touched) validateField(field, true); }));
+	form.addEventListener('change', () => fields.forEach(field => { if (field.dataset.touched) validateField(field, true); }));
+	form.addEventListener('submit', event => {
+		const invalid = Array.from(fields).filter(field => !validateField(field, true));
+		if (invalid.length) { event.preventDefault(); invalid[0]?.focus(); }
+	});
+});

@@ -55,9 +55,9 @@
 				endif %}
 			</tr>
 		</thead>
-		<tbody>{% for entry in entries %}<tr>
-				<td class="entry-title"><span class="transaction-icon {{ entry.kind }}">{{ icon(entry.kind) }}</span>
-					<div><span class="comment">{{ entry.comment }}</span><small>{{ {'income':'Доход', 'expense':'Расход', 'transfer':'Трансфер'}[entry.kind] }}</small></div>
+		<tbody>{% for entry in entries %}<tr{% if entry.planned %} class="planned-row"{% endif %}>
+				<td class="entry-title"><div class="entry-title-content"><span class="transaction-icon {{ entry.kind }}">{{ icon(entry.kind) }}</span>
+					<div><span class="comment">{{ entry.comment }}</span><small>{{ {'income':'Доход', 'expense':'Расход', 'transfer':'Трансфер'}[entry.kind] }}{% if entry.planned %} · <span class="planned-badge">Запланировано</span>{% endif %}</small></div></div>
 				</td>
 				<td class="entry-labels"><span class="category-label">{{ entry.category }}</span>
 					<div class="tag-list">{% for tag in entry.tags %}<span class="tag">#{{ tag.name }}</span>{% endfor
@@ -66,10 +66,10 @@
 				<td class="entry-date">{{ entry.occurred_at|localdate }}</td>
 				<td class="entry-amount {{ entry.kind }}">
 					{% if entry.kind == 'transfer' %}
-					<span class="transfer-leg expense">−{{ entry.amount|money }} {{ symbols[entry.currency] }}</span>
+					<span class="transfer-leg expense">−{{ entry.amount|abs|money }} {{ symbols[entry.currency] }}</span>
 					<span class="transfer-leg income">+{{ entry.destination_amount|money }} {{ symbols[entry.destination_currency] }}</span>
-					<small class="transfer-rate">1 {{ entry.currency }} {{ '=' if entry.exchange_rate else '≈' }} {{ entry.exchange_rate or entry.amount|effective_rate(entry.destination_amount) }} {{ entry.destination_currency }}</small>
-					{% else %}{{ '+' if entry.kind == 'income' else '−' }}{{ entry.amount|money }} <span>{{ symbols[entry.currency] }}</span>{% endif %}
+					<small class="transfer-rate">1 {{ entry.currency }} ≈ {{ entry.amount|effective_rate(entry.destination_amount) }} {{ entry.destination_currency }}</small>
+					{% else %}{{ '+' if entry.kind == 'income' else '−' }}{{ entry.amount|abs|money }} <span>{{ symbols[entry.currency] }}</span>{% endif %}
 				</td>
 				{% if editable %}<td class="entry-actions"><a class="icon-button"
 						href="{{ url_for('entry_form', entry_id=entry.id) }}"

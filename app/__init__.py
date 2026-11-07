@@ -52,6 +52,7 @@ APP.add_template_filter(effective_rate, 'effective_rate')
 
 @APP.before_request
 def authenticate() -> Response | None:
+	g.now = datetime.now()
 	g.auth = None
 	g.profile = None
 	g.error = None
@@ -165,7 +166,7 @@ def context() -> dict[str, Any]:
 		currencies=CURRENCIES,
 		symbols=SYMBOLS,
 		profiles=profiles,
-		now_local=datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
+		now_local=g.now.strftime('%Y-%m-%dT%H:%M:%S'),
 		today=datetime.now().strftime('%Y-%m-%d'),
 		notice=notices.get(request.args.get('done', ''))
 	)
@@ -274,7 +275,7 @@ def logout() -> Response:
 
 @APP.get('/')
 def overview() -> str:
-	entries = fetch_entries_for(g.profile['id'])
+	entries = fetch_entries_for(g.profile['id'], g.now)
 	period = request.args.get('period', 'month')
 	currency = request.args.get('currency', 'RUB')
 	if currency not in CURRENCIES:
@@ -287,14 +288,14 @@ def overview() -> str:
 	end_selected = request.args.get('end_date', datetime.now().strftime('%Y-%m-%d'))
 
 	try:
-		stats = calc_statistics(entries, period, selected, currency, end_selected)
+		stats = calc_statistics(entries, period, selected, currency, end_selected, g.now)
 	except ValidationError as error:
 		abort(400, description=str(error))
 
 	return render_template(
 		'overview.html',
 		active='overview',
-		balances=fetch_balances(g.profile['id'], entries),
+		balances=fetch_balances(g.profile['id'], entries, g.now),
 		stats=stats,
 		period=period,
 		selected=selected,
@@ -304,21 +305,23 @@ def overview() -> str:
 
 def _fetch_catalog(table: Literal['categories', 'tags']) -> list[sqlite3.Row]:
 	return dbm.get().execute(
-		f'SELECT * FROM {table} WHERE profile_id = ? ORDER BY ' + (
-			'is_default DESC, ' if table == 'categories' else ''
-		) + 'name COLLATE NOCASE',
+		f'SELECT * FROM {table} WHERE profile_id = ? ORDER BY name COLLATE NOCASE',
 		(g.profile['id'],)
 	).fetchall()
 
 @APP.get('/entries')
 def entry_list() -> str:
-	entries = fetch_entries_for(g.profile['id'])
+	entries = fetch_entries_for(g.profile['id'], g.now)
 	args = request.args
 
-	fields: tuple[Literal['kind', 'category_id'], ...] = ('kind', 'category_id')
+	fields: tuple[Literal['kind'], ...] = ('kind',)
 	for field in fields:
 		if args.get(field):
 			entries = [e for e in entries if str(e[field]) == args[field]]
+	if args.get('category_id') == 'none':
+		entries = [e for e in entries if e['category_id'] is None]
+	elif args.get('category_id'):
+		entries = [e for e in entries if str(e['category_id']) == args['category_id']]
 	if args.get('currency'):
 		entries = [e for e in entries if args['currency'] in (e['currency'], e['destination_currency'])]
 	selected_tags = {tag for tag in args.getlist('tag') if tag}
@@ -347,6 +350,8 @@ def entry_list() -> str:
 		'entries.html',
 		active='entries',
 		entries=entries,
+		current_entries=[e for e in entries if not e['planned']],
+		planned_entries=[e for e in entries if e['planned']],
 		categories=_fetch_catalog('categories'),
 		tags=_fetch_catalog('tags'),
 		selected_tags=selected_tags,
@@ -367,10 +372,10 @@ def entry_form(entry_id: int | None = None) -> ResponseReturnValue:
 
 	values: dict[str, Any] | MultiDict[str, str] = dict(entry or {})
 	if entry:
-		values['amount'] = amount_input(entry['amount'])
-		if entry['kind'] == 'transfer':
+		values['amount'] = amount_input(abs(entry['amount']))
+		values['kind'] = 'transfer' if entry['destination_currency'] is not None else 'income' if entry['amount'] > 0 else 'expense'
+		if entry['destination_currency'] is not None:
 			values['destination_amount'] = amount_input(entry['destination_amount'])
-			values['transfer_mode'] = 'rate' if entry['exchange_rate'] is not None else 'amounts'
 
 	status = 200
 	if request.method == 'POST':
@@ -499,9 +504,12 @@ def change_library(kind: str, action: str) -> ResponseReturnValue:
 		row = None
 		if action != 'add':
 			row = fetch_owned(kind, request.form.get('id'), profile_id)
-			if kind == 'categories' and row['is_default']:
-				raise ValidationError('Категорию «Без категории» нельзя изменить или удалить')
-		if action == 'delete' and kind == 'categories':
+		
+		if (kind == 'categories' 
+			and action != 'delete'
+			and request.form.get('name', '').strip() == 'Без категории'):
+			raise ValidationError('Название «Без категории» зарезервировано')
+		elif action == 'delete' and kind == 'categories':
 			assert row is not None
 			delete_category(row['id'], profile_id)
 		else:

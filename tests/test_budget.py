@@ -150,7 +150,6 @@ class BudgetTest(unittest.TestCase):
 				to_money(invalid)
 
 	def test_required_comment_future_date_and_time(self) -> None:
-		now = datetime.now()
 		for changes in (
 			{'comment': '  '},
 			{'amount': '0'},
@@ -158,8 +157,6 @@ class BudgetTest(unittest.TestCase):
 			{'currency': 'GBP'},
 			{'kind': 'transfer'},
 			{'occurred_at': '2020-02-30T12:00'},
-			{'occurred_at': (now + timedelta(days=1)).isoformat(timespec='seconds')},
-			{'occurred_at': (now + timedelta(minutes=2)).isoformat(timespec='seconds')},
 			{'occurred_at': '2020-01-01'},
 			{'occurred_at': '2020-01-01T12:00+03:00'}
 		):
@@ -197,28 +194,17 @@ class BudgetTest(unittest.TestCase):
 		self.assertEqual(self.post('/entries/1/delete').status_code, 302)
 		self.assertEqual(self.scalar('SELECT count(*) FROM entries'), 0)
 
-	def test_category_deletion_reassigns_and_default_is_protected(self) -> None:
+	def test_category_deletion_sets_null_and_default_is_virtual(self) -> None:
+		self.assertEqual(self.scalar('SELECT count(*) FROM categories'), 0)
 		category = self.add_category()
 		self.post('/entries/new', self.entry(category_id=str(category)))
-		default = cast(
-			int, self.scalar('SELECT id FROM categories WHERE is_default = 1')
-		)
-
-		self.assertEqual(self.post(
-			'/library/categories/delete', {'id': category}
-		).status_code, 302)
-		self.assertEqual(
-			self.scalar('SELECT category_id FROM entries'), default
-		)
-
-		for action in ('delete', 'rename'):
-			self.assertEqual(self.post(
-				f'/library/categories/{action}', {'id': default, 'name': 'Другое'}
-			).status_code, 422)
-
-		self.assertEqual(self.scalar(
-			'SELECT name FROM categories WHERE id = ?', (default,)
-		), 'Без категории')
+		self.assertEqual(self.post('/library/categories/delete', {'id': category}).status_code, 302)
+		self.assertIsNone(self.scalar('SELECT category_id FROM entries'))
+		self.assertEqual(self.scalar('SELECT count(*) FROM categories'), 0)
+		self.assertIn('Без категории', self.client.get('/entries?category_id=none').get_data(as_text=True))
+		self.assertEqual(self.post('/library/categories/add', {'name': 'Без категории'}).status_code, 422)
+		with self.app.app_context():
+			self.assertEqual(fetch_entries_for(1)[0]['category'], 'Без категории')
 
 	def test_tag_deletion_keeps_entry(self) -> None:
 		tag = self.add_tag()
@@ -248,20 +234,20 @@ class BudgetTest(unittest.TestCase):
 				entries, 'day', '2020-05-12', 'RUB'
 			)
 
-			self.assertEqual(day['totals'], {'income': 0, 'expense': 1234})
-			self.assertEqual([r['expense'] for r in day['tags']], [1234, 1234])
+			self.assertEqual(day['current']['totals'], {'income': 0, 'expense': 1234})
+			self.assertEqual([r['expense'] for r in day['current']['tags']], [1234, 1234])
 			
 			month = calc_statistics(
 				entries, 'month', '2020-05', 'RUB'
 			)
 			
-			self.assertEqual(month['totals'], {'income': 5000, 'expense': 1234})
+			self.assertEqual(month['current']['totals'], {'income': 5000, 'expense': 1234})
 			self.assertEqual(calc_statistics(
 				entries, 'year', '2019', 'RUB'
-			)['totals']['expense'], 500)
+			)['current']['totals']['expense'], 500)
 			self.assertEqual(calc_statistics(
 				entries, 'day', '2020-05-12', 'USD'
-			)['totals']['expense'], 8000)
+			)['current']['totals']['expense'], 8000)
 
 		for url in (
 			'/?period=unknown',
@@ -309,8 +295,8 @@ class BudgetTest(unittest.TestCase):
 			with self.assertRaises(sqlite3.IntegrityError), db.get():
 				db.get().execute(
 					"INSERT INTO entries"
-					"(profile_id, kind, currency, amount, occurred_at, comment, category_id) "
-					"VALUES (2, 'expense', 'RUB', 100, '2020-01-01T00:00:00', 'x', ?)",
+					"(profile_id, currency, amount, occurred_at, comment, category_id) "
+					"VALUES (2, 'RUB', -100, '2020-01-01T00:00:00', 'x', ?)",
 					(cat,)
 				)
 
@@ -492,7 +478,7 @@ class BudgetTest(unittest.TestCase):
 		return self.entry(**{
 			'kind': 'transfer', 'amount': '900', 'currency': 'RUB',
 			'destination_currency': 'USD', 'destination_amount': '10',
-			'transfer_mode': 'amounts', 'comment': 'Обмен валют', **updates,
+			'comment': 'Обмен валют', **updates,
 		})
 
 	def test_transfer_amounts_and_both_currency_filters(self) -> None:
@@ -501,7 +487,6 @@ class BudgetTest(unittest.TestCase):
 			entries = fetch_entries_for(1)
 			self.assertEqual(len(entries), 1)
 			self.assertEqual(entries[0]['destination_amount'], 1000)
-			self.assertIsNone(entries[0]['exchange_rate'])
 			self.assertEqual(fetch_balances(1, entries), {'RUB': 10000, 'USD': 2000, 'EUR': 0})
 		for currency in ('RUB', 'USD'):
 			page = self.client.get('/entries', query_string={'currency': currency}).get_data(as_text=True)
@@ -515,27 +500,25 @@ class BudgetTest(unittest.TestCase):
 		self.assertEqual(edit.status_code, 200)
 		self.assertIn('value="10.00"', edit.get_data(as_text=True))
 
-	def test_transfer_rate_and_half_up_rounding(self) -> None:
+	def test_transfer_uses_only_final_amount_and_computes_rate(self) -> None:
 		self.assertEqual(self.post('/entries/new', self.transfer(
 			currency='USD', destination_currency='RUB', amount='100',
-			transfer_mode='rate', exchange_rate='90', destination_amount='999',
+			destination_amount='9000', exchange_rate='999', transfer_mode='invalid',
 		)).status_code, 302)
 		with self.app.app_context():
 			entries = fetch_entries_for(1)
+			self.assertEqual(entries[0]['amount'], -10000)
 			self.assertEqual(entries[0]['destination_amount'], 900000)
-			self.assertEqual(entries[0]['exchange_rate'], '90')
 			self.assertEqual(fetch_balances(1, entries), {'RUB': 1000000, 'USD': -9000, 'EUR': 0})
-		edit = self.client.get('/entries/1/edit').get_data(as_text=True)
-		self.assertIn('value="9000.00"', edit)
-		self.assertIn('value="90"', edit)
-		self.assertEqual(self.post('/entries/new', self.transfer(
-			amount='0.01', transfer_mode='rate', exchange_rate='0,5',
-		)).status_code, 302)
-		self.assertEqual(self.scalar('SELECT destination_amount FROM entries WHERE id=2'), 1)
-		self.assertEqual(self.post('/entries/new', self.transfer(
-			amount='1', transfer_mode='rate', exchange_rate='1.23456789',
-		)).status_code, 302)
-		self.assertEqual(self.scalar('SELECT destination_amount FROM entries WHERE id=3'), 123)
+			columns = {row['name'] for row in db.get().execute('PRAGMA table_info(entries)')}
+			self.assertNotIn('exchange_rate', columns)
+			self.assertNotIn('kind', columns)
+		page = self.client.get('/entries/1/edit').get_data(as_text=True)
+		self.assertIn('value="9000.00"', page)
+		self.assertIn('data-exchange-rate', page)
+		self.assertNotIn('name="exchange_rate"', page)
+		self.assertNotIn('transfer_mode', page)
+		self.assertIn('90', self.client.get('/entries').get_data(as_text=True))
 
 	def test_transfer_edit_delete_and_type_changes(self) -> None:
 		tag = self.add_tag()
@@ -550,7 +533,6 @@ class BudgetTest(unittest.TestCase):
 		self.assertEqual(self.post('/entries/1/edit', self.entry(kind='income', amount='5')).status_code, 302)
 		self.assertIsNone(self.scalar('SELECT destination_currency FROM entries'))
 		self.assertIsNone(self.scalar('SELECT destination_amount FROM entries'))
-		self.assertIsNone(self.scalar('SELECT exchange_rate FROM entries'))
 		self.assertEqual(self.post('/entries/1/edit', self.transfer()).status_code, 302)
 		self.assertEqual(self.post('/entries/1/delete').status_code, 302)
 		with self.app.app_context():
@@ -561,17 +543,11 @@ class BudgetTest(unittest.TestCase):
 		for changes in (
 			{'destination_currency': 'RUB'}, {'destination_currency': 'GBP'},
 			{'destination_amount': '0'}, {'destination_amount': '-1'},
-			{'destination_amount': '0.001'}, {'transfer_mode': 'invalid'},
-			{'transfer_mode': 'rate', 'exchange_rate': '0'},
-			{'transfer_mode': 'rate', 'exchange_rate': '-1'},
-			{'transfer_mode': 'rate', 'exchange_rate': 'NaN'},
-			{'transfer_mode': 'rate', 'exchange_rate': '1.123456789'},
-			{'transfer_mode': 'rate', 'exchange_rate': '0.00000001', 'amount': '0.01'},
-			{'transfer_mode': 'rate', 'exchange_rate': '999999999999999999999'},
+			{'destination_amount': '0.001'}, {'destination_amount': ''},
 		):
 			with self.subTest(changes=changes):
 				self.assertEqual(self.post('/entries/1/edit', self.transfer(**changes)).status_code, 422)
-		self.assertEqual(self.scalar('SELECT amount FROM entries'), 90000)
+		self.assertEqual(self.scalar('SELECT amount FROM entries'), -90000)
 		self.assertEqual(self.scalar('SELECT destination_amount FROM entries'), 1000)
 		self.assertEqual(self.scalar('SELECT count(*) FROM entries'), 1)
 
@@ -583,14 +559,14 @@ class BudgetTest(unittest.TestCase):
 			entries = fetch_entries_for(1)
 			rub = calc_statistics(entries, 'day', '2020-05-12', 'RUB')
 			usd = calc_statistics(entries, 'day', '2020-05-12', 'USD')
-			self.assertEqual(rub['totals'], {'income': 1200, 'expense': 0})
-			self.assertEqual(rub['transfers'], {'sent': 90000, 'received': 0, 'count': 1})
-			self.assertEqual(rub['tags'], [])
-			self.assertEqual(rub['categories'][0]['income'], 1200)
-			self.assertEqual(usd['totals'], {'income': 0, 'expense': 0})
-			self.assertEqual(usd['transfers'], {'sent': 0, 'received': 1000, 'count': 1})
-			self.assertEqual(usd['categories'], [])
-			self.assertEqual(calc_statistics(entries, 'day', '2020-05-12', 'EUR')['count'], 0)
+			self.assertEqual(rub['current']['totals'], {'income': 1200, 'expense': 0})
+			self.assertEqual(rub['current']['transfers'], {'sent': 90000, 'received': 0, 'count': 1})
+			self.assertEqual(rub['current']['tags'], [])
+			self.assertEqual(rub['current']['categories'][0]['income'], 1200)
+			self.assertEqual(usd['current']['totals'], {'income': 0, 'expense': 0})
+			self.assertEqual(usd['current']['transfers'], {'sent': 0, 'received': 1000, 'count': 1})
+			self.assertEqual(usd['current']['categories'], [])
+			self.assertEqual(calc_statistics(entries, 'day', '2020-05-12', 'EUR')['current']['count'], 0)
 		for currency in ('RUB', 'USD'):
 			page = self.client.get('/?period=day&date=2020-05-12&currency=' + currency)
 			self.assertEqual(page.status_code, 200)
@@ -603,10 +579,10 @@ class BudgetTest(unittest.TestCase):
 		with self.app.app_context():
 			entries = fetch_entries_for(1)
 			stats = calc_statistics(entries, 'range', '2019-12-31', 'RUB', '2020-02-29')
-			self.assertEqual(stats['count'], 3)
-			self.assertEqual(stats['totals']['expense'], 300)
+			self.assertEqual(stats['current']['count'], 3)
+			self.assertEqual(stats['current']['totals']['expense'], 300)
 			self.assertEqual((stats['start_date'], stats['end_date']), ('2019-12-31', '2020-02-29'))
-			self.assertEqual(calc_statistics(entries, 'range', '2020-02-29', 'RUB', '2020-02-29')['count'], 1)
+			self.assertEqual(calc_statistics(entries, 'range', '2020-02-29', 'RUB', '2020-02-29')['current']['count'], 1)
 		for start, end in (('2020-02-30', '2020-03-01'), ('2020-03-01', '2020-02-29'), ('2020-01-01', 'bad')):
 			self.assertEqual(self.client.get('/', query_string={'period': 'range', 'date': start, 'end_date': end}).status_code, 400)
 		page = self.client.get('/?period=range&date=2019-12-31&end_date=2020-02-29')
@@ -619,8 +595,8 @@ class BudgetTest(unittest.TestCase):
 		with self.app.app_context():
 			stats = calc_statistics(fetch_entries_for(1), 'week', '2020-01-03', 'RUB')
 			self.assertEqual((stats['start_date'], stats['end_date']), ('2019-12-28', '2020-01-03'))
-			self.assertEqual(stats['totals']['expense'], 200)
-			self.assertEqual(stats['count'], 2)
+			self.assertEqual(stats['current']['totals']['expense'], 200)
+			self.assertEqual(stats['current']['count'], 2)
 		page = self.client.get('/?period=week&date=2020-01-03')
 		self.assertEqual(page.status_code, 200)
 		self.assertIn('Последние 7 дней', page.get_data(as_text=True))
@@ -643,15 +619,58 @@ class BudgetTest(unittest.TestCase):
 		self.assertNotIn('Все выбранные', self.client.get('/entries', query_string=query + [('tag', '99999')]).get_data(as_text=True))
 		self.assertIn('Только первый', self.client.get('/entries').get_data(as_text=True))
 
-	def test_schema_rejects_incomplete_or_same_currency_transfer(self) -> None:
+	def test_schema_rejects_incomplete_or_invalid_transfer(self) -> None:
 		with self.app.app_context():
-			category = db.get().execute('SELECT id FROM categories WHERE is_default=1').fetchone()['id']
-			for currency, received in ((None, None), ('RUB', 100), ('USD', None)):
-				with self.subTest(currency=currency, received=received), self.assertRaises(sqlite3.IntegrityError), db.get():
+			for amount, currency, received in ((-100, 'RUB', 100), (-100, 'USD', None), (100, 'USD', 100), (-100, None, 100), (0, None, None)):
+				with self.subTest(amount=amount, currency=currency, received=received), self.assertRaises(sqlite3.IntegrityError), db.get():
 					db.get().execute(
-						"INSERT INTO entries(profile_id,kind,currency,amount,occurred_at,comment,category_id,destination_currency,destination_amount) VALUES (1,'transfer','RUB',100,'2020-01-01T00:00:00','x',?,?,?)",
-						(category, currency, received),
+						"INSERT INTO entries(profile_id,currency,amount,occurred_at,comment,destination_currency,destination_amount) VALUES (1,'RUB',?,'2020-01-01T00:00:00','x',?,?)",
+						(amount, currency, received),
 					)
+
+	def test_planned_records_do_not_change_current_balances(self) -> None:
+		future = (datetime.now() + timedelta(days=2)).isoformat(timespec='seconds')
+		self.assertEqual(self.post('/entries/new', self.entry(amount='50', occurred_at=future, comment='Будущая покупка')).status_code, 302)
+		self.assertEqual(self.post('/entries/new', self.transfer(occurred_at=future)).status_code, 302)
+		with self.app.app_context():
+			entries = fetch_entries_for(1)
+			self.assertTrue(all(e['planned'] for e in entries))
+			self.assertEqual(fetch_balances(1, entries), {'RUB': 100000, 'USD': 1000, 'EUR': 0})
+			self.assertEqual(fetch_balances(1, entries, now=datetime.now() + timedelta(days=3)), {'RUB': 5000, 'USD': 2000, 'EUR': 0})
+		page = self.client.get('/entries').get_data(as_text=True)
+		self.assertIn('Запланированные записи', page)
+		self.assertIn('Будущая покупка', page)
+		self.assertIn('planned-row', page)
+		self.assertNotIn('data-now-max', self.client.get('/entries/new').get_data(as_text=True))
+
+	def test_statistics_split_by_time_and_transition_at_exact_instant(self) -> None:
+		self.post('/entries/new', self.entry(kind='income', amount='20', occurred_at='2020-05-12T12:30:00'))
+		self.post('/entries/new', self.entry(amount='10', occurred_at='2020-05-12T12:30:01'))
+		self.post('/entries/new', self.transfer(occurred_at='2020-05-12T12:30:01'))
+		with self.app.app_context():
+			entries = fetch_entries_for(1)
+			stats = calc_statistics(entries, 'day', '2020-05-12', 'RUB', now=datetime(2020,5,12,12,30,0))
+			self.assertEqual(stats['current']['totals'], {'income': 2000, 'expense': 0})
+			self.assertEqual(stats['planned']['totals'], {'income': 0, 'expense': 1000})
+			self.assertEqual(stats['planned']['transfers']['sent'], 90000)
+			self.assertEqual(stats['planned']['count'], 2)
+			self.assertEqual(stats['current']['count'], 1)
+			after = calc_statistics(entries, 'day', '2020-05-12', 'RUB', now=datetime(2020,5,12,12,30,1))
+			self.assertEqual(after['planned']['count'], 0)
+			self.assertEqual(after['current']['count'], 3)
+			self.assertEqual(after['current']['totals']['expense'], 1000)
+
+	def test_signed_amounts_and_nullable_category(self) -> None:
+		for kind in ('income', 'expense'):
+			self.assertEqual(self.post('/entries/new', self.entry(kind=kind, amount='1.23')).status_code, 302)
+		self.assertEqual(self.scalar('SELECT amount FROM entries WHERE id=1'), 123)
+		self.assertEqual(self.scalar('SELECT amount FROM entries WHERE id=2'), -123)
+		self.assertIsNone(self.scalar('SELECT category_id FROM entries WHERE id=1'))
+		self.assertEqual(self.scalar('SELECT count(*) FROM categories'), 0)
+		with self.app.app_context():
+			entries = fetch_entries_for(1)
+			self.assertEqual([e['kind'] for e in entries], ['expense', 'income'])
+		self.assertIn('value="1.23"', self.client.get('/entries/2/edit').get_data(as_text=True))
 
 if __name__ == '__main__':
 	unittest.main()

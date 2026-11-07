@@ -1,4 +1,4 @@
-{% extends 'base.html' %}{% from 'macros.html' import entry_table, breakdown with context %}
+{% extends 'base.html' %}{% from 'statistics.html' import statistics_group with context %}
 {% block content %}<div class="page-heading">
 	<div>
 		<span class="eyebrow">ФИНАНСОВАЯ КАРТИНА</span>
@@ -12,7 +12,7 @@
 <div class="balance-grid">{% for c in currencies %}
 	<section class="balance-card {{ 'featured' if c == 'RUB' }}">
 		<div class="balance-top">
-			<span>Общий баланс</span>
+			<span>Текущий баланс</span>
 			<span class="currency-badge">{{ c }}</span>
 		</div>
 		<p class="balance-value">{{ balances[c]|money }} <span>{{ symbols[c] }}</span></p>
@@ -53,78 +53,7 @@
 		</div>
 	</form>
 	<p class="statistics-dates muted">{{ stats.start_date|calendar_date }} — {{ stats.end_date|calendar_date }} включительно{% if period == 'week' %} · Последние 7 дней{% endif %}</p>
-	<div class="summary-grid">
-		<article class="summary-card">
-			<span class="summary-label">
-				<span class="transaction-icon income">{{ icon('income') }}</span>
-				Доходы
-			</span>
-			<strong class="income">+{{ stats.totals.income|money }}
-				<span>{{ symbols[currency] }}</span>
-			</strong>
-			<small>За выбранный период</small>
-		</article>
-		<article class="summary-card">
-			<span class="summary-label">
-				<span class="transaction-icon expense">
-					{{ icon('expense') }}
-				</span>Расходы
-			</span>
-			<strong class="expense">−{{ stats.totals.expense|money }}
-				<span>{{ symbols[currency] }}</span>
-			</strong>
-			<small>За выбранный период</small>
-		</article>
-		<article class="summary-card">
-			<span class="summary-label">
-				<span class="transaction-icon neutral">
-					{{ icon('wallet') }}
-				</span>
-				Разница
-			</span>
-			<strong>{{ (stats.totals.income - stats.totals.expense)|money }}
-				<span>{{ symbols[currency] }}</span>
-			</strong>
-			<small>{{ stats.count }} операций · {{ currency }}</small>
-		</article>
-	</div>
-	<div class="transfer-summary">
-		<div><span class="transaction-icon transfer">{{ icon('transfer') }}</span><strong>Конвертация · {{ currency }}</strong><small>{{ stats.transfers.count }} трансферов · Не входит в доходы и расходы</small></div>
-		<p>Списано <strong class="expense">−{{ stats.transfers.sent|money }} {{ symbols[currency] }}</strong></p>
-		<p>Получено <strong class="income">+{{ stats.transfers.received|money }} {{ symbols[currency] }}</strong></p>
-	</div>
-	<div class="analysis-grid">
-		<section class="panel">
-			<div class="panel-heading">
-				<h3>По категориям</h3>
-				<span class="count-badge">{{ stats.categories|length }}</span>
-			</div>{{ breakdown(stats.categories, currency, 'За этот период операций пока нет.') }}
-		</section>
-		<section class="panel">
-			<div class="panel-heading">
-				<h3>По тегам</h3>
-				<span class="count-badge">{{ stats.tags|length }}</span>
-			</div>
-			{{ breakdown(stats.tags, currency, 'Добавьте теги к операциям, чтобы увидеть разбивку.') }}
-			<p class="panel-note">Операция с несколькими тегами учитывается в каждом из них</p>
-		</section>
-	</div>
-</section>
-<section class="panel recent-panel">
-	<div class="panel-heading">
-		<div>
-			<h2>Операции за период</h2>
-			<p class="muted">Последние записи · {{ currency }}</p>
-		</div><a class="text-link" href="{{ url_for('entry_list') }}">Все операции {{ icon('arrow') }}</a>
-	</div>
-	{% if stats.entries %}{{ entry_table(stats.entries[:5]) }}{% else %}
-	<div class="empty">
-		<span class="empty-icon">{{ icon('entries') }}</span>
-		<h3>Здесь появится ваш журнал</h3>
-		<p>Добавьте первую запись о доходе или расходе.</p>
-		<a class="button secondary" href="{{ url_for('entry_form') }}">
-			{{ icon('plus') }} Добавить запись
-		</a>
-	</div>{% endif %}
+	{{ statistics_group(stats.current, currency, 'Текущие', False) }}
+	{{ statistics_group(stats.planned, currency, 'Запланированные', True) }}
 </section>
 {% endblock %}

@@ -1,6 +1,6 @@
 import sqlite3
-from typing import cast
 
+from typing import cast
 from flask import current_app, g
 
 def get() -> sqlite3.Connection:

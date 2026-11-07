@@ -15,14 +15,11 @@ CREATE TABLE IF NOT EXISTS categories (
 	id INTEGER PRIMARY KEY,
 	profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
 	name TEXT NOT NULL CHECK(
-		length(trim(name)) BETWEEN 1 AND 80
+		length(trim(name)) BETWEEN 1 AND 80 AND name != 'Без категории'
 	),
-	is_default INTEGER NOT NULL DEFAULT 0 CHECK(is_default IN (0, 1)),
 	UNIQUE(profile_id, name),
 	UNIQUE(id, profile_id)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS one_default_category ON categories(profile_id)
-WHERE is_default = 1;
 CREATE TABLE IF NOT EXISTS tags (
 	id INTEGER PRIMARY KEY,
 	profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
@@ -35,32 +32,21 @@ CREATE TABLE IF NOT EXISTS tags (
 CREATE TABLE IF NOT EXISTS entries (
 	id INTEGER PRIMARY KEY,
 	profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-	kind TEXT NOT NULL CHECK(kind IN ('income', 'expense', 'transfer')),
 	currency TEXT NOT NULL CHECK(currency IN ('RUB', 'USD', 'EUR')),
-	amount INTEGER NOT NULL CHECK(amount > 0),
+	amount INTEGER NOT NULL CHECK(amount != 0),
 	destination_currency TEXT CHECK(destination_currency IN ('RUB', 'USD', 'EUR')),
 	destination_amount INTEGER CHECK(destination_amount > 0),
-	exchange_rate TEXT,
 	occurred_at TEXT NOT NULL,
 	comment TEXT NOT NULL CHECK(
 		length(trim(comment)) BETWEEN 1 AND 2000
 	),
-	category_id INTEGER NOT NULL,
+	category_id INTEGER,
 	UNIQUE(id, profile_id),
 	FOREIGN KEY(category_id, profile_id) REFERENCES categories(id, profile_id),
 	CHECK(
-		(
-			kind = 'transfer'
-			AND destination_currency IS NOT NULL
-			AND destination_currency != currency
-			AND destination_amount IS NOT NULL
-		)
-		OR (
-			kind != 'transfer'
-			AND destination_currency IS NULL
-			AND destination_amount IS NULL
-			AND exchange_rate IS NULL
-		)
+		(destination_currency IS NULL AND destination_amount IS NULL)
+		OR (destination_currency IS NOT NULL AND destination_amount IS NOT NULL
+			AND amount < 0 AND destination_currency != currency)
 	)
 );
 CREATE INDEX IF NOT EXISTS entries_by_profile_date ON entries(profile_id, occurred_at DESC);

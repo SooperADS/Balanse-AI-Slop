@@ -847,6 +847,7 @@ main {
 .entries-table td {
 	padding: 17px 23px;
 	border-bottom: 1px solid #2c352c;
+	vertical-align: middle;
 	font-size: 12px
 }
 
@@ -859,13 +860,16 @@ main {
 }
 
 .entry-title {
-	display: flex;
-	align-items: center;
-	gap: 12px;
 	min-width: 180px
 }
 
-.entry-title>div {
+.entry-title-content {
+	display: flex;
+	align-items: center;
+	gap: 12px
+}
+
+.entry-title-content>div {
 	min-width: 0
 }
 
@@ -1008,9 +1012,9 @@ main {
 
 .filter-buttons {
 	display: flex;
-	align-items: end;
+	align-items: center;
+	align-self: end;
 	gap: 13px;
-	padding-bottom: 1px;
 	flex-wrap: wrap
 }
 
@@ -2143,4 +2147,28 @@ dialog p {
 	.entry-amount.transfer { white-space: normal; overflow-wrap: anywhere; }
 	.kind-selector { gap: 7px; }
 	.kind-selector span { padding: 12px 8px; font-size: 11px; }
+}
+
+:root { --blue: #8dc8ed; --blue-line: #425f74; }
+.amount-row { align-items: end; }
+.statistics-group { margin-top: 28px; }
+.statistics-group > .recent-panel { margin-top: 20px; }
+.statistics-group.planned-section { padding: 22px; border: 1px solid var(--blue-line); border-radius: var(--radius); background: #8dc8ed06; }
+.planned-section > .section-heading h2, .planned-section > .panel-heading h2 { color: var(--blue); }
+.planned-section .count-badge { color: var(--blue); border-color: var(--blue-line); background: #8dc8ed0f; }
+.entry-group { margin-bottom: 25px; }
+.entry-group.planned-section { border-color: var(--blue-line); }
+.planned-row { background: #8dc8ed05; }
+.planned-badge { color: var(--blue); white-space: nowrap; }
+.planned-note { color: var(--blue); background: #8dc8ed0b; border: 1px solid var(--blue-line); border-radius: 8px; padding: 12px 15px; font-size: 12px; }
+.field-invalid { border-color: var(--red) !important; box-shadow: 0 0 0 1px #e9a08e40; }
+.field-error { display: block; color: var(--red); font-size: 11px; line-height: 1.5; margin-top: 6px; }
+.library-rename { flex-wrap: wrap; }
+.library-rename input { flex: 1; width: 0; }
+.library-rename .field-error { flex-basis: 100%; order: 2; }
+@media(max-width:760px) {
+	.statistics-group.planned-section { padding: 15px; }
+	.statistics-group.planned-section .summary-grid { grid-template-columns: 1fr; }
+	.statistics-group.planned-section .summary-card strong { font-size: 23px; }
+	.planned-note { font-size: 11px; }
 }

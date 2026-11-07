@@ -38,6 +38,7 @@
 			<option value="">
 				Все категории
 			</option>
+			<option value="none"{% if request.args.get('category_id') == 'none' %} selected{% endif %}>Без категории</option>
 			{% for category in categories %}
 			<option value="{{ category.id }}" {% if request.args.get('category_id')==category.id|string %} selected{%
 				endif %}>
@@ -64,21 +65,15 @@
 	</label>
 	<div class="filter-buttons">
 		<button class="button secondary">Применить</button>
-		<a class="text-link" href="{{ url_for('entry_list') }}">Сбросить</a>
+		<a class="button secondary" href="{{ url_for('entry_list') }}">Сбросить</a>
 	</div>
 </form>
-<section class="panel">
-	<div class="panel-heading">
-		<h2>Журнал записей</h2>
-		<span class="count-badge">{{ entries|length }}</span>
-	</div>
-	{% if entries %}{{ entry_table(entries, editable=True) }}{% else %}
-	<div class="empty">
-		<span class="empty-icon">{{ icon('entries') }}</span>
-		<h3>Записей не найдено</h3>
-		<p>Измените фильтры или добавьте новую операцию.</p>
-		<a class="button secondary" href="{{ url_for('entry_form') }}">Добавить запись</a>
-	</div>
+{% for group, title, planned in [(current_entries, 'Текущие записи', False), (planned_entries, 'Запланированные записи', True)] %}
+<section class="panel entry-group {{ 'planned-section' if planned }}">
+	<div class="panel-heading"><h2>{{ title }}</h2><span class="count-badge">{{ group|length }}</span></div>
+	{% if group %}{{ entry_table(group, editable=True) }}{% else %}
+	<div class="empty compact">{{ 'Запланированных записей с такими фильтрами нет.' if planned else 'Текущих записей с такими фильтрами нет.' }}</div>
 	{% endif %}
 </section>
+{% endfor %}
 {% endblock %}
