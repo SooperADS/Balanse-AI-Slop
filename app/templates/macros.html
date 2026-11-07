@@ -23,6 +23,8 @@
 	<path d="M7 17 17 7M7 7h10v10" />
 	{% elif name == 'expense' %}
 	<path d="m17 7-10 10M7 7v10h10" />
+	{% elif name == 'transfer' %}
+	<path d="M4 7h16m-4-4 4 4-4 4M20 17H4m4-4-4 4 4 4" />
 	{% elif name == 'logout' %}
 	<path d="M9 4H4v16h5M9 12h12m-4-4 4 4-4 4" />
 	{% elif name == 'arrow' %}
@@ -55,16 +57,20 @@
 		</thead>
 		<tbody>{% for entry in entries %}<tr>
 				<td class="entry-title"><span class="transaction-icon {{ entry.kind }}">{{ icon(entry.kind) }}</span>
-					<div><span class="comment">{{ entry.comment }}</span><small>{{ 'Доход' if entry.kind == 'income'
-							else 'Расход' }}</small></div>
+					<div><span class="comment">{{ entry.comment }}</span><small>{{ {'income':'Доход', 'expense':'Расход', 'transfer':'Трансфер'}[entry.kind] }}</small></div>
 				</td>
 				<td class="entry-labels"><span class="category-label">{{ entry.category }}</span>
 					<div class="tag-list">{% for tag in entry.tags %}<span class="tag">#{{ tag.name }}</span>{% endfor
 						%}</div>
 				</td>
 				<td class="entry-date">{{ entry.occurred_at|localdate }}</td>
-				<td class="entry-amount {{ entry.kind }}">{{ '+' if entry.kind == 'income' else '−' }}{{
-					entry.amount|money }} <span>{{ symbols[entry.currency] }}</span></td>
+				<td class="entry-amount {{ entry.kind }}">
+					{% if entry.kind == 'transfer' %}
+					<span class="transfer-leg expense">−{{ entry.amount|money }} {{ symbols[entry.currency] }}</span>
+					<span class="transfer-leg income">+{{ entry.destination_amount|money }} {{ symbols[entry.destination_currency] }}</span>
+					<small class="transfer-rate">1 {{ entry.currency }} {{ '=' if entry.exchange_rate else '≈' }} {{ entry.exchange_rate or entry.amount|effective_rate(entry.destination_amount) }} {{ entry.destination_currency }}</small>
+					{% else %}{{ '+' if entry.kind == 'income' else '−' }}{{ entry.amount|money }} <span>{{ symbols[entry.currency] }}</span>{% endif %}
+				</td>
 				{% if editable %}<td class="entry-actions"><a class="icon-button"
 						href="{{ url_for('entry_form', entry_id=entry.id) }}"
 						aria-label="Изменить запись: {{ entry.comment }}" title="Изменить">{{ icon('edit') }}</a>

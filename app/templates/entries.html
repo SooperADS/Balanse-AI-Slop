@@ -15,7 +15,7 @@
 		Тип
 		<select name="kind">
 			<option value="">Все операции</option>
-			{% for key, title in [('income','Доходы'),('expense','Расходы')] %}
+			{% for key, title in [('income','Доходы'),('expense','Расходы'),('transfer','Трансферы')] %}
 			<option value="{{ key }}" {% if request.args.get('kind')==key %} selected{% endif %}>
 				{{ title }}
 			</option>
@@ -29,10 +29,7 @@
 				Все валюты
 			</option>
 			{% for c in currencies %}
-			<option{% if request.args.get('currency')==c %} selected{% endif %}>
-				{{ c }}
-				</option>
-				{% endfor %}
+			<option{% if request.args.get('currency')==c %} selected{% endif %}>{{ c }}</option>{% endfor %}
 		</select>
 	</label>
 	<label>
@@ -49,17 +46,14 @@
 			{% endfor %}
 		</select>
 	</label>
-	<label>
-		Тег
-		<select name="tag">
-			<option value="">Все теги</option>
-			{% for tag in tags %}
-			<option value="{{ tag.id }}" {% if request.args.get('tag')==tag.id|string %} selected{% endif %}>
-				{{ tag.name }}
-			</option>
-			{% endfor %}
-		</select>
-	</label>
+	<fieldset class="filter-tags tag-fieldset">
+		<legend>Теги <span class="muted">· запись должна содержать все выбранные</span></legend>
+		<div class="tag-choices">{% for tag in tags %}
+			<label><input type="checkbox" name="tag" value="{{ tag.id }}" {% if tag.id|string in selected_tags %}
+					checked{% endif %}><span>#{{ tag.name }}</span></label>
+			{% else %}<span class="muted">Тегов пока нет</span>{% endfor %}
+		</div>
+	</fieldset>
 	<label>
 		С даты
 		<input type="date" name="from" value="{{ request.args.get('from', '') }}">

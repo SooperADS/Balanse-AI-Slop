@@ -2,7 +2,7 @@ import hashlib
 import tomllib
 
 from pathlib import Path
-from typing import TypedDict
+from typing import TypedDict, cast
 from werkzeug.security import generate_password_hash
 from flask import current_app
 
@@ -58,4 +58,4 @@ def load(root: Path) -> tuple[AppConfig, str, int]:
 	}, host, port
 
 def get() -> AppConfig:
-	return current_app.config # pyright: ignore[reportReturnType]
+	return cast(AppConfig, current_app.config)

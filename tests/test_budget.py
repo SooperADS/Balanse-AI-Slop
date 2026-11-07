@@ -264,7 +264,7 @@ class BudgetTest(unittest.TestCase):
 			)['totals']['expense'], 8000)
 
 		for url in (
-			'/?period=week',
+			'/?period=unknown',
 			'/?period=month&date=broken',
 			'/?currency=GBP',
 			'/entries?from=broken'
@@ -428,7 +428,7 @@ class BudgetTest(unittest.TestCase):
 			self.client.post('/entries/new', data=self.entry()).status_code, 400
 		)
 		self.assertEqual(self.client.post(
-			'/entries/new', data={**self.entry(), 'csrf_`token`': 'неверный'}
+			'/entries/new', data={**self.entry(), 'csrf_token': 'неверный'}
 		).status_code, 400)
 		self.assertEqual(self.client.post(
 			'/entries/new',
@@ -487,6 +487,171 @@ class BudgetTest(unittest.TestCase):
 		self.assertIn('HttpOnly', cookie)
 		self.assertIn('SameSite=Strict', cookie)
 		self.assertIn('9999', cookie)
+
+	def transfer(self, **updates: str) -> dict[str, str]:
+		return self.entry(**{
+			'kind': 'transfer', 'amount': '900', 'currency': 'RUB',
+			'destination_currency': 'USD', 'destination_amount': '10',
+			'transfer_mode': 'amounts', 'comment': 'Обмен валют', **updates,
+		})
+
+	def test_transfer_amounts_and_both_currency_filters(self) -> None:
+		self.assertEqual(self.post('/entries/new', self.transfer()).status_code, 302)
+		with self.app.app_context():
+			entries = fetch_entries_for(1)
+			self.assertEqual(len(entries), 1)
+			self.assertEqual(entries[0]['destination_amount'], 1000)
+			self.assertIsNone(entries[0]['exchange_rate'])
+			self.assertEqual(fetch_balances(1, entries), {'RUB': 10000, 'USD': 2000, 'EUR': 0})
+		for currency in ('RUB', 'USD'):
+			page = self.client.get('/entries', query_string={'currency': currency}).get_data(as_text=True)
+			self.assertIn('Обмен валют', page)
+		self.assertNotIn('Обмен валют', self.client.get('/entries?currency=EUR').get_data(as_text=True))
+		page = self.client.get('/entries?kind=transfer').get_data(as_text=True)
+		self.assertIn('Обмен валют', page)
+		self.assertIn('1 RUB', page)
+		self.assertIn('USD', page)
+		edit = self.client.get('/entries/1/edit')
+		self.assertEqual(edit.status_code, 200)
+		self.assertIn('value="10.00"', edit.get_data(as_text=True))
+
+	def test_transfer_rate_and_half_up_rounding(self) -> None:
+		self.assertEqual(self.post('/entries/new', self.transfer(
+			currency='USD', destination_currency='RUB', amount='100',
+			transfer_mode='rate', exchange_rate='90', destination_amount='999',
+		)).status_code, 302)
+		with self.app.app_context():
+			entries = fetch_entries_for(1)
+			self.assertEqual(entries[0]['destination_amount'], 900000)
+			self.assertEqual(entries[0]['exchange_rate'], '90')
+			self.assertEqual(fetch_balances(1, entries), {'RUB': 1000000, 'USD': -9000, 'EUR': 0})
+		edit = self.client.get('/entries/1/edit').get_data(as_text=True)
+		self.assertIn('value="9000.00"', edit)
+		self.assertIn('value="90"', edit)
+		self.assertEqual(self.post('/entries/new', self.transfer(
+			amount='0.01', transfer_mode='rate', exchange_rate='0,5',
+		)).status_code, 302)
+		self.assertEqual(self.scalar('SELECT destination_amount FROM entries WHERE id=2'), 1)
+		self.assertEqual(self.post('/entries/new', self.transfer(
+			amount='1', transfer_mode='rate', exchange_rate='1.23456789',
+		)).status_code, 302)
+		self.assertEqual(self.scalar('SELECT destination_amount FROM entries WHERE id=3'), 123)
+
+	def test_transfer_edit_delete_and_type_changes(self) -> None:
+		tag = self.add_tag()
+		self.post('/entries/new', self.transfer(tags=str(tag)))
+		self.assertEqual(self.post('/entries/1/edit', self.transfer(
+			amount='500', destination_currency='EUR', destination_amount='5',
+		)).status_code, 302)
+		with self.app.app_context():
+			self.assertEqual(fetch_balances(1, fetch_entries_for(1)), {'RUB': 50000, 'USD': 1000, 'EUR': 500})
+		self.assertEqual(self.scalar('SELECT count(*) FROM entries'), 1)
+		self.assertEqual(self.scalar('SELECT count(*) FROM entry_tags'), 0)
+		self.assertEqual(self.post('/entries/1/edit', self.entry(kind='income', amount='5')).status_code, 302)
+		self.assertIsNone(self.scalar('SELECT destination_currency FROM entries'))
+		self.assertIsNone(self.scalar('SELECT destination_amount FROM entries'))
+		self.assertIsNone(self.scalar('SELECT exchange_rate FROM entries'))
+		self.assertEqual(self.post('/entries/1/edit', self.transfer()).status_code, 302)
+		self.assertEqual(self.post('/entries/1/delete').status_code, 302)
+		with self.app.app_context():
+			self.assertEqual(fetch_balances(1, fetch_entries_for(1)), {'RUB': 100000, 'USD': 1000, 'EUR': 0})
+
+	def test_transfer_validation_and_failed_edit_preserves_both_sides(self) -> None:
+		self.post('/entries/new', self.transfer())
+		for changes in (
+			{'destination_currency': 'RUB'}, {'destination_currency': 'GBP'},
+			{'destination_amount': '0'}, {'destination_amount': '-1'},
+			{'destination_amount': '0.001'}, {'transfer_mode': 'invalid'},
+			{'transfer_mode': 'rate', 'exchange_rate': '0'},
+			{'transfer_mode': 'rate', 'exchange_rate': '-1'},
+			{'transfer_mode': 'rate', 'exchange_rate': 'NaN'},
+			{'transfer_mode': 'rate', 'exchange_rate': '1.123456789'},
+			{'transfer_mode': 'rate', 'exchange_rate': '0.00000001', 'amount': '0.01'},
+			{'transfer_mode': 'rate', 'exchange_rate': '999999999999999999999'},
+		):
+			with self.subTest(changes=changes):
+				self.assertEqual(self.post('/entries/1/edit', self.transfer(**changes)).status_code, 422)
+		self.assertEqual(self.scalar('SELECT amount FROM entries'), 90000)
+		self.assertEqual(self.scalar('SELECT destination_amount FROM entries'), 1000)
+		self.assertEqual(self.scalar('SELECT count(*) FROM entries'), 1)
+
+	def test_transfer_statistics_excludes_conversion_from_income_and_expense(self) -> None:
+		tag = self.add_tag()
+		self.post('/entries/new', self.transfer(tags=str(tag)))
+		self.post('/entries/new', self.entry(kind='income', amount='12'))
+		with self.app.app_context():
+			entries = fetch_entries_for(1)
+			rub = calc_statistics(entries, 'day', '2020-05-12', 'RUB')
+			usd = calc_statistics(entries, 'day', '2020-05-12', 'USD')
+			self.assertEqual(rub['totals'], {'income': 1200, 'expense': 0})
+			self.assertEqual(rub['transfers'], {'sent': 90000, 'received': 0, 'count': 1})
+			self.assertEqual(rub['tags'], [])
+			self.assertEqual(rub['categories'][0]['income'], 1200)
+			self.assertEqual(usd['totals'], {'income': 0, 'expense': 0})
+			self.assertEqual(usd['transfers'], {'sent': 0, 'received': 1000, 'count': 1})
+			self.assertEqual(usd['categories'], [])
+			self.assertEqual(calc_statistics(entries, 'day', '2020-05-12', 'EUR')['count'], 0)
+		for currency in ('RUB', 'USD'):
+			page = self.client.get('/?period=day&date=2020-05-12&currency=' + currency)
+			self.assertEqual(page.status_code, 200)
+			self.assertIn('Обмен валют', page.get_data(as_text=True))
+
+	def test_arbitrary_period_includes_both_boundaries(self) -> None:
+		for timestamp in ('2019-12-30T23:59:59', '2019-12-31T00:00:00', '2020-01-01T12:30:00',
+		                  '2020-02-29T23:59:59', '2020-03-01T00:00:00'):
+			self.assertEqual(self.post('/entries/new', self.entry(amount='1', occurred_at=timestamp)).status_code, 302)
+		with self.app.app_context():
+			entries = fetch_entries_for(1)
+			stats = calc_statistics(entries, 'range', '2019-12-31', 'RUB', '2020-02-29')
+			self.assertEqual(stats['count'], 3)
+			self.assertEqual(stats['totals']['expense'], 300)
+			self.assertEqual((stats['start_date'], stats['end_date']), ('2019-12-31', '2020-02-29'))
+			self.assertEqual(calc_statistics(entries, 'range', '2020-02-29', 'RUB', '2020-02-29')['count'], 1)
+		for start, end in (('2020-02-30', '2020-03-01'), ('2020-03-01', '2020-02-29'), ('2020-01-01', 'bad')):
+			self.assertEqual(self.client.get('/', query_string={'period': 'range', 'date': start, 'end_date': end}).status_code, 400)
+		page = self.client.get('/?period=range&date=2019-12-31&end_date=2020-02-29')
+		self.assertEqual(page.status_code, 200)
+		self.assertIn('29.02.2020', page.get_data(as_text=True))
+
+	def test_week_is_last_seven_days_inclusive(self) -> None:
+		for timestamp in ('2019-12-27T23:59:59', '2019-12-28T00:00:00', '2020-01-03T23:59:59', '2020-01-04T00:00:00'):
+			self.post('/entries/new', self.entry(amount='1', occurred_at=timestamp))
+		with self.app.app_context():
+			stats = calc_statistics(fetch_entries_for(1), 'week', '2020-01-03', 'RUB')
+			self.assertEqual((stats['start_date'], stats['end_date']), ('2019-12-28', '2020-01-03'))
+			self.assertEqual(stats['totals']['expense'], 200)
+			self.assertEqual(stats['count'], 2)
+		page = self.client.get('/?period=week&date=2020-01-03')
+		self.assertEqual(page.status_code, 200)
+		self.assertIn('Последние 7 дней', page.get_data(as_text=True))
+
+	def test_multiple_tag_filter_requires_all_tags(self) -> None:
+		tag1, tag2, tag3 = self.add_tag('дом'), self.add_tag('ремонт'), self.add_tag('ещё')
+		for comment, selected in (
+			('Все выбранные', [tag1, tag2, tag3]),
+			('Только первый', [tag1]), ('Только второй', [tag2]), ('Без тегов', []),
+		):
+			form = MultiDict(self.entry(comment=comment))
+			form.setlist('tags', [str(tag) for tag in selected])
+			self.post('/entries/new', form)
+		query = [('tag', str(tag1)), ('tag', str(tag2))]
+		page = self.client.get('/entries', query_string=query).get_data(as_text=True)
+		self.assertIn('Все выбранные', page)
+		for excluded in ('Только первый', 'Только второй', 'Без тегов'):
+			self.assertNotIn(excluded, page)
+		self.assertIn('Все выбранные', self.client.get('/entries', query_string=query + [('tag', str(tag1))]).get_data(as_text=True))
+		self.assertNotIn('Все выбранные', self.client.get('/entries', query_string=query + [('tag', '99999')]).get_data(as_text=True))
+		self.assertIn('Только первый', self.client.get('/entries').get_data(as_text=True))
+
+	def test_schema_rejects_incomplete_or_same_currency_transfer(self) -> None:
+		with self.app.app_context():
+			category = db.get().execute('SELECT id FROM categories WHERE is_default=1').fetchone()['id']
+			for currency, received in ((None, None), ('RUB', 100), ('USD', None)):
+				with self.subTest(currency=currency, received=received), self.assertRaises(sqlite3.IntegrityError), db.get():
+					db.get().execute(
+						"INSERT INTO entries(profile_id,kind,currency,amount,occurred_at,comment,category_id,destination_currency,destination_amount) VALUES (1,'transfer','RUB',100,'2020-01-01T00:00:00','x',?,?,?)",
+						(category, currency, received),
+					)
 
 if __name__ == '__main__':
 	unittest.main()

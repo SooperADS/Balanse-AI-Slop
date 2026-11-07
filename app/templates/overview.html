@@ -31,17 +31,20 @@
 	</div>
 	<form method="get" class="stats-filter" data-period-form>
 		<div class="period-tabs">
-			{% for value, label in [('day','День'), ('month','Месяц'), ('year','Год')] %}
+			{% for value, label in [('day','День'), ('week','Неделя'), ('month','Месяц'), ('year','Год'), ('range','Период')] %}
 			<label>
 				<input type="radio" name="period" value="{{ value }}" {% if period==value %} checked{% endif %}>
 				<span>{{ label }}</span>
 			</label>{% endfor %}
 		</div>
 		<div class="stats-filter-fields">
-			<label class="sr-only" for="stat-date">Период</label>
-			<input id="stat-date" name="date" value="{{ selected }}" required data-period-date
-				aria-label="Выбранный период"
-				placeholder="{{ {'day':'ГГГГ-ММ-ДД','month':'ГГГГ-ММ','year':'ГГГГ'}[period] }}">
+			<label><span data-period-start-label>Дата / начало периода</span>
+				<input id="stat-date" name="date" value="{{ selected }}" required data-period-date
+					placeholder="{{ {'day':'ГГГГ-ММ-ДД','week':'ГГГГ-ММ-ДД','range':'ГГГГ-ММ-ДД','month':'ГГГГ-ММ','year':'ГГГГ'}[period] }}">
+			</label>
+			<label data-period-end><span>По дату включительно (для «Период»)</span>
+				<input type="date" name="end_date" value="{{ end_selected }}" data-period-end-input required>
+			</label>
 			<label class="sr-only" for="stat-currency">Валюта статистики</label>
 			<select id="stat-currency" name="currency">{% for c in currencies %}
 				<option{% if currency==c %} selected{% endif %}>{{ c }}</option>{% endfor %}
@@ -49,6 +52,7 @@
 			<button class="button secondary">Показать</button>
 		</div>
 	</form>
+	<p class="statistics-dates muted">{{ stats.start_date|calendar_date }} — {{ stats.end_date|calendar_date }} включительно{% if period == 'week' %} · Последние 7 дней{% endif %}</p>
 	<div class="summary-grid">
 		<article class="summary-card">
 			<span class="summary-label">
@@ -83,6 +87,11 @@
 			</strong>
 			<small>{{ stats.count }} операций · {{ currency }}</small>
 		</article>
+	</div>
+	<div class="transfer-summary">
+		<div><span class="transaction-icon transfer">{{ icon('transfer') }}</span><strong>Конвертация · {{ currency }}</strong><small>{{ stats.transfers.count }} трансферов · Не входит в доходы и расходы</small></div>
+		<p>Списано <strong class="expense">−{{ stats.transfers.sent|money }} {{ symbols[currency] }}</strong></p>
+		<p>Получено <strong class="income">+{{ stats.transfers.received|money }} {{ symbols[currency] }}</strong></p>
 	</div>
 	<div class="analysis-grid">
 		<section class="panel">

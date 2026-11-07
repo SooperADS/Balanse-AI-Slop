@@ -2107,3 +2107,40 @@ dialog p {
 		scroll-behavior: auto !important
 	}
 }
+/* Transfers, custom periods and multiple-tag filters. */
+.transaction-icon.transfer { background: #c5e78314; color: var(--accent); }
+.transfer-fields { padding: 20px; border: 1px solid var(--line); border-radius: 12px; display: flex; flex-direction: column; gap: 18px; }
+.transfer-fields legend { padding: 0 6px; margin-bottom: 0; }
+.transfer-mode { width: fit-content; }
+.transfer-preview { display: block; min-height: 38px; overflow-wrap: anywhere; }
+.transfer-leg { display: block; }
+.transfer-leg + .transfer-leg { margin-top: 4px; }
+.transfer-rate { display: block; color: var(--muted); font-size: 9px; margin-top: 6px; }
+.filter-tags { grid-column: 1 / -1; grid-row: auto; }
+.stats-filter .period-tabs { max-width: 100%; flex-wrap: wrap; }
+.stats-filter .period-tabs label { flex: 1; }
+.stats-filter .period-tabs span { text-align: center; padding-left: 12px; padding-right: 12px; }
+.stats-filter-fields { align-items: end; flex-wrap: wrap; }
+.stats-filter-fields label > span { font-size: 10px; }
+.stats-filter-fields label > input { margin-top: 6px; }
+.statistics-dates { margin: -5px 0 18px; font-size: 11px; }
+.transfer-summary { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 22px; margin-bottom: 22px; }
+.transfer-summary > div { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin-right: auto; }
+.transfer-summary .transaction-icon { grid-row: span 2; }
+.transfer-summary strong { font-size: 12px; font-weight: 500; }
+.transfer-summary small { font-size: 10px; color: var(--muted); }
+.transfer-summary p { font-size: 11px; color: var(--muted); }
+.transfer-summary p strong { display: block; margin-top: 5px; font-variant-numeric: tabular-nums; }
+@media (max-width: 760px) {
+	.stats-filter .period-tabs { width: 100%; }
+	.stats-filter .period-tabs span { padding: 7px 8px; font-size: 11px; }
+	.stats-filter-fields label { flex: 1; min-width: 135px; }
+	.stats-filter-fields label input { width: 100%; }
+	.transfer-fields { padding: 15px; }
+	.transfer-summary { gap: 16px; padding: 17px; }
+	.transfer-summary > div { width: 100%; }
+	.transfer-summary p { flex: 1; }
+	.entry-amount.transfer { white-space: normal; overflow-wrap: anywhere; }
+	.kind-selector { gap: 7px; }
+	.kind-selector span { padding: 12px 8px; font-size: 11px; }
+}

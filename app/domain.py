@@ -3,8 +3,9 @@
 import re
 import sqlite3
 
-from datetime import datetime
-from decimal import Decimal, InvalidOperation
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
+import calendar
 from collections.abc import Iterable, Mapping
 from typing import Literal, TypedDict, cast
 
@@ -16,7 +17,7 @@ from . import db
 CURRENCIES: tuple[str, ...] = ('RUB', 'USD', 'EUR')
 SYMBOLS: dict[str, str] = {'RUB': '₽', 'USD': '$', 'EUR': '€'}
 
-EntryKind = Literal['income', 'expense']
+EntryKind = Literal['income', 'expense', 'transfer']
 
 class EntryTag(TypedDict):
 	entry_id: int
@@ -29,6 +30,9 @@ class Entry(TypedDict):
 	kind: EntryKind
 	currency: str
 	amount: int
+	destination_currency: str | None
+	destination_amount: int | None
+	exchange_rate: str | None
 	occurred_at: str
 	comment: str
 	category_id: int
@@ -46,6 +50,9 @@ class Statistics(TypedDict):
 	entries: list[Entry]
 	categories: list[Breakdown]
 	tags: list[Breakdown]
+	transfers: dict[str, int]
+	start_date: str
+	end_date: str
 
 class ValidationError(ValueError):
 	pass
@@ -90,6 +97,32 @@ def _to_amounts(capitals: Mapping[str, str]) -> dict[str, int]:
 		c: to_money(capitals.get(c, '0'), capital=True) for c in CURRENCIES
 	}
 
+def to_exchange_rate(raw: str) -> Decimal:
+	value = raw.strip().replace(' ', '').replace('\u00a0', '').replace(',', '.')
+	if not re.fullmatch(r'\d+(?:\.\d{1,8})?', value):
+		raise ValidationError('Курс должен быть положительным числом с точностью до 8 знаков после запятой')
+	rate = Decimal(value)
+	if rate <= 0:
+		raise ValidationError('Курс должен быть больше нуля')
+	return rate
+
+def convert_amount(amount: int, rate: Decimal) -> int:
+	with localcontext() as context:
+		context.prec = 64
+		converted = Decimal(amount) * rate
+		if converted > 900_000_000_000_000_000:
+			raise ValidationError('Слишком большая сумма получения')
+		result = int(converted.quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+	if result <= 0:
+		raise ValidationError('Сумма получения после округления должна быть не меньше копейки/цента')
+	return result
+
+def effective_rate(amount: int, destination_amount: int) -> str:
+	"""Вычисленный курс для показа; исходные суммы остаются точными."""
+	with localcontext() as context:
+		context.prec = 32
+		return format(Decimal(destination_amount) / Decimal(amount), '.8g')
+
 def create_profile(raw_name: str, capitals: Mapping[str, str]) -> int:
 	title, amounts = to_name(raw_name), _to_amounts(capitals)
 
@@ -132,8 +165,24 @@ def save_entry(
 
 	amount = to_money(form.get('amount', ''))
 	kind, currency = form.get('kind'), form.get('currency')
-	if kind not in ('income', 'expense') or currency not in CURRENCIES:
+	if kind not in ('income', 'expense', 'transfer') or currency not in CURRENCIES:
 		raise ValidationError('Выберите тип операции и валюту')
+	destination_currency: str | None = None
+	destination_amount: int | None = None
+	exchange_rate: str | None = None
+	if kind == 'transfer':
+		destination_currency = form.get('destination_currency')
+		if destination_currency not in CURRENCIES or destination_currency == currency:
+			raise ValidationError('Для трансфера выберите две разные валюты')
+		mode = form.get('transfer_mode', 'amounts')
+		if mode == 'rate':
+			rate = to_exchange_rate(form.get('exchange_rate', ''))
+			destination_amount = convert_amount(amount, rate)
+			exchange_rate = format(rate, 'f')
+		elif mode == 'amounts':
+			destination_amount = to_money(form.get('destination_amount', ''))
+		else:
+			raise ValidationError('Выберите способ ввода трансфера')
 
 	comment, raw_date = form.get('comment', '').strip(), form.get('occurred_at', '')
 	if not 1 <= len(comment) <= 2000:
@@ -163,22 +212,25 @@ def save_entry(
 		fetch_owned('tags', tag, profile_id)
 
 	values = (
-		kind, currency, amount, occurred_at.isoformat(timespec='seconds'), comment, category_id
+		kind, currency, amount, occurred_at.isoformat(timespec='seconds'), comment, category_id,
+		destination_currency, destination_amount, exchange_rate,
 	)
 
 	with dbo:
 		if entry_id is None:
 			entry_id = dbo.execute(
 				'INSERT INTO entries'
-				'(kind, currency, amount, occurred_at, comment, category_id, profile_id) '
-				'VALUES (?, ?, ?, ?, ?, ?, ?)',
+				'(kind, currency, amount, occurred_at, comment, category_id, '
+				'destination_currency, destination_amount, exchange_rate, profile_id) '
+				'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
 				(*values, profile_id),
 			).lastrowid
 			assert entry_id is not None  # The INSERT always creates a row id.
 		else:
 			dbo.execute(
 				'UPDATE entries SET kind = ?, currency = ?, amount = ?, '
-				'occurred_at = ?, comment = ?, category_id = ? '
+				'occurred_at = ?, comment = ?, category_id = ?, '
+				'destination_currency = ?, destination_amount = ?, exchange_rate = ? '
 				'WHERE id = ? AND profile_id = ?',
 				(*values, entry_id, profile_id)
 			)
@@ -242,6 +294,10 @@ def fetch_balances(profile_id: int, entries: Iterable[Entry]) -> dict[str, int]:
 			result[currency] += amount
 		else:
 			result[currency] -= amount
+			if entry['kind'] == 'transfer':
+				destination_currency, destination_amount = entry['destination_currency'], entry['destination_amount']
+				assert destination_currency is not None and destination_amount is not None
+				result[destination_currency] += destination_amount
 
 	return result
 
@@ -249,29 +305,28 @@ def calc_statistics(
 	entries: Iterable[Entry],
 	period: str,
 	selected: str,
-	currency: str
+	currency: str,
+	end_selected: str | None = None,
 ) -> Statistics:
-	try:
-		if period == 'day':
-			key = datetime.strptime(selected, '%Y-%m-%d').strftime('%Y-%m-%d')
-		elif period == 'month':
-			key = datetime.strptime(selected, '%Y-%m').strftime('%Y-%m')
-		elif period == 'year' and re.fullmatch(r'\d{4}', selected) and 1 <= int(selected) <= 9999:
-			key = selected
-		else:
-			raise ValueError()
-	except ValueError:
-		raise ValidationError('Укажите корректный период статистики.') from None
-	
+	start, end = period_bounds(period, selected, end_selected)
 	matched = [
-		e for e in entries if e['currency'] == currency and e['occurred_at'].startswith(key)
+		e for e in entries if start.isoformat() <= e['occurred_at'][:10] <= end.isoformat()
+		and (e['currency'] == currency or e['destination_currency'] == currency)
 	]
 	totals = {k: sum(
 		e['amount'] for e in matched if e['kind'] == k
 	) for k in ('income', 'expense')}
-
+	transfers = {'sent': 0, 'received': 0, 'count': 0}
 	groups: dict[str, dict[str, Breakdown]] = {'categories': {}, 'tags': {}}
 	for e in matched:
+		if e['kind'] == 'transfer':
+			transfers['count'] += 1
+			if e['currency'] == currency:
+				transfers['sent'] += e['amount']
+			else:
+				assert e['destination_amount'] is not None
+				transfers['received'] += e['destination_amount']
+			continue
 		for group, labels in (
 			('categories', [e['category']]),
 			('tags', [t['name'] for t in e['tags']])
@@ -285,12 +340,34 @@ def calc_statistics(
 		'totals': totals,
 		'count': len(matched),
 		'entries': matched,
-		'categories': sorted(
-			groups['categories'].values(),
-			key=lambda r: r['income'] + r['expense'], reverse=True
-		),
-		'tags': sorted(
-			groups['tags'].values(),
-			key=lambda r: r['income'] + r['expense'], reverse=True
-		)
+		'transfers': transfers,
+		'start_date': start.isoformat(),
+		'end_date': end.isoformat(),
+		'categories': sorted(groups['categories'].values(), key=lambda r: r['income'] + r['expense'], reverse=True),
+		'tags': sorted(groups['tags'].values(), key=lambda r: r['income'] + r['expense'], reverse=True),
 	}
+
+def period_bounds(period: str, selected: str, end_selected: str | None = None) -> tuple[date, date]:
+	try:
+		if period in ('day', 'week', 'range'):
+			if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', selected):
+				raise ValueError()
+			start = end = date.fromisoformat(selected)
+			if period == 'week':
+				start = date.fromordinal(max(1, end.toordinal() - 6))
+			elif period == 'range':
+				if not end_selected or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', end_selected):
+					raise ValueError()
+				end = date.fromisoformat(end_selected)
+		elif period == 'month':
+			start = datetime.strptime(selected, '%Y-%m').date().replace(day=1)
+			end = start.replace(day=calendar.monthrange(start.year, start.month)[1])
+		elif period == 'year' and re.fullmatch(r'\d{4}', selected) and 1 <= int(selected) <= 9999:
+			start, end = date(int(selected), 1, 1), date(int(selected), 12, 31)
+		else:
+			raise ValueError()
+	except ValueError:
+		raise ValidationError('Укажите корректный период статистики.') from None
+	if start > end:
+		raise ValidationError('Начальная дата периода не должна быть позже конечной')
+	return start, end

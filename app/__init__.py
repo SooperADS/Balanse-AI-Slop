@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from flask import Flask, abort, g, redirect, render_template, request, url_for
 from flask.typing import ResponseReturnValue
 from werkzeug.datastructures import MultiDict
@@ -32,6 +32,7 @@ from app.domain import (
 	save_profile,
 	calc_statistics
 )
+from app.domain import effective_rate
 
 COOKIE: str = 'budget_session'
 LOGIN_COOKIE: str = 'budget_login_csrf'
@@ -39,8 +40,11 @@ LOGIN_COOKIE: str = 'budget_login_csrf'
 APP = Flask(__name__)
 APP.config.update(
 	MAX_CONTENT_LENGTH=128 * 1024,
-	DATABASE=str(Path('data/budget.sqlite3').resolve())
+	DATABASE=str(Path('data/budget.sqlite3').resolve()),
+	MAX_LOGIN_ATTEMPTS=5,
 )
+APP.teardown_appcontext(dbm.close)
+APP.add_template_filter(effective_rate, 'effective_rate')
 
 # ===================
 #  Authorization
@@ -181,6 +185,10 @@ def amount_input(value: int) -> str:
 def localdate(value: str) -> str:
 	return datetime.fromisoformat(value).strftime('%d.%m.%Y · %H:%M')
 
+@APP.template_filter('calendar_date')
+def calendar_date(value: str) -> str:
+	return datetime.fromisoformat(value).strftime('%d.%m.%Y')
+
 @APP.errorhandler(400)
 @APP.errorhandler(404)
 @APP.errorhandler(413)
@@ -272,13 +280,14 @@ def overview() -> str:
 	if currency not in CURRENCIES:
 		abort(400, description='Неизвестная валюта')
 
-	formats = {'day': '%Y-%m-%d', 'month': '%Y-%m', 'year': '%Y'}
+	formats = {'day': '%Y-%m-%d', 'week': '%Y-%m-%d', 'range': '%Y-%m-%d', 'month': '%Y-%m', 'year': '%Y'}
 	selected = request.args.get('date') or datetime.now().strftime(
 		formats.get(period, '%Y-%m')
 	)
+	end_selected = request.args.get('end_date', datetime.now().strftime('%Y-%m-%d'))
 
 	try:
-		stats = calc_statistics(entries, period, selected, currency)
+		stats = calc_statistics(entries, period, selected, currency, end_selected)
 	except ValidationError as error:
 		abort(400, description=str(error))
 
@@ -289,6 +298,7 @@ def overview() -> str:
 		stats=stats,
 		period=period,
 		selected=selected,
+		end_selected=end_selected,
 		currency=currency
 	)
 
@@ -305,14 +315,17 @@ def entry_list() -> str:
 	entries = fetch_entries_for(g.profile['id'])
 	args = request.args
 
-	for field in ('currency', 'kind', 'category_id'):
+	fields: tuple[Literal['kind', 'category_id'], ...] = ('kind', 'category_id')
+	for field in fields:
 		if args.get(field):
 			entries = [e for e in entries if str(e[field]) == args[field]]
-	
-	tag, q = args.get("tag"), args.get('q')
-	if tag:
+	if args.get('currency'):
+		entries = [e for e in entries if args['currency'] in (e['currency'], e['destination_currency'])]
+	selected_tags = {tag for tag in args.getlist('tag') if tag}
+	q = args.get('q')
+	if selected_tags:
 		entries = [
-			e for e in entries if any(str(t['id']) == tag for t in e['tags'])
+			e for e in entries if selected_tags.issubset({str(t['id']) for t in e['tags']})
 		]
 
 	if q:
@@ -335,7 +348,8 @@ def entry_list() -> str:
 		active='entries',
 		entries=entries,
 		categories=_fetch_catalog('categories'),
-		tags=_fetch_catalog('tags')
+		tags=_fetch_catalog('tags'),
+		selected_tags=selected_tags,
 	)
 
 @APP.route('/entries/new', methods=['GET', 'POST'])
@@ -354,6 +368,9 @@ def entry_form(entry_id: int | None = None) -> ResponseReturnValue:
 	values: dict[str, Any] | MultiDict[str, str] = dict(entry or {})
 	if entry:
 		values['amount'] = amount_input(entry['amount'])
+		if entry['kind'] == 'transfer':
+			values['destination_amount'] = amount_input(entry['destination_amount'])
+			values['transfer_mode'] = 'rate' if entry['exchange_rate'] is not None else 'amounts'
 
 	status = 200
 	if request.method == 'POST':
@@ -527,13 +544,12 @@ def change_library(kind: str, action: str) -> ResponseReturnValue:
 def init(config_obj: Mapping[str, object]) -> Flask:
 	APP.config.update(config_obj)
 
-	app_config: config.AppConfig = APP.config # pyright: ignore[reportAssignmentType]
+	app_config = cast(config.AppConfig, APP.config)
 	app_config.setdefault(
 		'PASSWORD_FINGERPRINT',
 		config.token_hash(app_config['PASSWORD_HASH'])
 	)
 
-	APP.teardown_appcontext(dbm.close)
 	with APP.app_context():
 		path = Path(app_config['DATABASE'])
 		path.parent.mkdir(parents=True, exist_ok=True)

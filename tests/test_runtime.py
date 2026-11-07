@@ -40,8 +40,8 @@ class RuntimeTest(unittest.TestCase):
 				load_config()
 
 			self.assertEqual((self.root / 'config.toml').stat().st_mode & 0o777, 0o600)
-			with self.assertRaisesRegex(ValueError, 'непустой пароль'):
-				load_config()
+			cfg, _, _ = load_config()
+			self.assertTrue(check_password_hash(cfg['PASSWORD_HASH'], ''))
 
 		text = '[auth]\npassword="my secret"\n[server]\nhost="127.0.0.1"\nport=8081\n'
 		config, host, port = self.config(text)
@@ -59,7 +59,7 @@ class RuntimeTest(unittest.TestCase):
 		self.assertNotEqual(same['PASSWORD_HASH'], config['PASSWORD_HASH'])
 		for bad in (
 			'[auth]\npassword=42',
-			'[auth]\npassword=""',
+			'[auth]\npassword="' + 'x' * 513 + '"',
 			text.replace('8081', '0'),
 			text.replace('8081', 'true')):
 			with self.subTest(bad=bad), self.assertRaises(ValueError):
@@ -93,7 +93,7 @@ class RuntimeTest(unittest.TestCase):
 					connection.request('GET', '/login')
 					response = connection.getresponse()
 					self.assertEqual(response.status, 200)
-					self.assertIn('Всё под контролем.', response.read().decode())
+					self.assertIn('Всё под контролем', response.read().decode())
 					self.assertIn('budget_login_csrf=', response.getheader('Set-Cookie') or '')
 					break
 				except (ConnectionRefusedError, TimeoutError):

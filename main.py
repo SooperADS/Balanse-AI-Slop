@@ -19,7 +19,7 @@ def main() -> int:
 		print(f'Не удалось запустить приложение: {error}', file=sys.stderr)
 		return 1
 
-	print(f'Домашняя бухгалтерия: http://127.0.0.1:{port}', flush=True)
+	print(f'Домашняя бухгалтерия: http://{host}:{port}', flush=True)
 	if host != '127.0.0.1':
 		print(f'С другого устройства: http://<локальный-IP-компьютера>:{port}', flush=True)
 	
