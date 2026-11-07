@@ -9,6 +9,8 @@ from datetime import date, datetime, time as day_time, timezone
 from dataclasses import dataclass
 from collections.abc import Mapping
 from typing import Any, Literal
+from urllib.parse import urlencode
+import segno
 from flask import Flask, abort, g, redirect, render_template, request, url_for
 from flask.typing import ResponseReturnValue
 from werkzeug.exceptions import HTTPException
@@ -49,15 +51,21 @@ APP.add_template_filter(effective_rate, 'effective_rate')
 
 @dataclass(frozen=True, slots=True)
 class _Session:
-	"""Проверенная сессия запроса без уже использованного отпечатка пароля."""
+	"""Хеш токена, CSRF-токен и выбранный профиль проверенной сессии запроса."""
 
 	token_hash: str
 	csrf_token: str
 	profile_id: int | None
 
-
 def _find_session(token: str) -> _Session | None:
-	"""Найти сессию текущего пароля; секрет токена не хранится в объекте."""
+	"""Найти сессию, действующую для текущего пароля приложения.
+
+	Args:
+	    token: Исходный секрет из cookie браузера.
+	Returns:
+	    Проверенная сессия либо None, если она отсутствует или пароль сменён.
+	Raises:
+	    sqlite3.Error: Не удалось прочитать сессии."""
 	row = dbm.get().execute(
 		'SELECT token_hash, csrf_token, profile_id FROM auth_sessions '
 		'WHERE token_hash=? AND password_fingerprint=?',
@@ -72,7 +80,12 @@ def _find_session(token: str) -> _Session | None:
 
 @APP.before_request
 def authenticate() -> Response | None:
-	"""Задать единый момент запроса, найти сессию и проверить CSRF для POST."""
+	"""Зафиксировать время запроса, проверить сессию и CSRF для POST.
+
+	Без сессии доступны вход, приглашения и статические ресурсы.
+	Raises:
+	    BadRequest: POST не прошёл проверку CSRF или Origin.
+	    sqlite3.Error: Не удалось прочитать сессию."""
 	g.now = datetime.now()
 	g.auth = None
 	g.profile = None
@@ -85,7 +98,7 @@ def authenticate() -> Response | None:
 		g.auth = _find_session(raw_token)
 
 	if g.auth is None:
-		if request.endpoint != 'login':
+		if request.endpoint not in ('login', 'invite'):
 			return redirect(url_for('login'))
 		g.csrf = request.cookies.get(LOGIN_COOKIE) or secrets.token_urlsafe(32)
 	else:
@@ -104,8 +117,11 @@ def authenticate() -> Response | None:
 	return None
 
 def _set_session_cookie(response: Response, token: str) -> None:
-	# No server-side deadline. Browsers may enforce their own cookie retention limit.
-	"""Выдать HttpOnly-cookie без прикладного срока сессии; браузер может ограничить её хранение."""
+	"""Выдать HttpOnly-cookie без прикладного срока сессии.
+
+	Args:
+	    response: Ответ, в который добавляется cookie.
+	    token: Секрет серверной сессии. Браузер может ограничить хранение cookie."""
 	response.set_cookie(
 		COOKIE, 
 		token,
@@ -117,12 +133,17 @@ def _set_session_cookie(response: Response, token: str) -> None:
 
 @APP.after_request
 def response_headers(response: Response) -> Response:
-	"""Добавить защитные заголовки, выдать CSRF-cookie входа и обновить cookie сессии."""
+	"""Добавить защитные заголовки и обновить cookie входа/сессии.
+
+	Args:
+	    response: Ответ Flask, изменяемый перед отправкой.
+	Returns:
+	    Тот же ответ с заголовками и cookie."""
 	if request.endpoint != 'static':
 		response.headers['Cache-Control'] = 'no-store'
 	response.headers['X-Content-Type-Options'] = 'nosniff'
 	response.headers['X-Frame-Options'] = 'DENY'
-	response.headers['Referrer-Policy'] = 'same-origin'
+	response.headers['Referrer-Policy'] = 'no-referrer'
 	response.headers['Content-Security-Policy'] = (
 		"default-src 'self';"
 		"style-src 'self';"
@@ -134,7 +155,7 @@ def response_headers(response: Response) -> Response:
 	)
 
 	auth, csrf = g.get('auth'), g.get('csrf')
-	if request.endpoint == 'login' and response.status_code != 302 and not auth and csrf:
+	if request.endpoint in ('login', 'invite') and response.status_code != 302 and not auth and csrf:
 		response.set_cookie(LOGIN_COOKIE, csrf, httponly=True, samesite='Strict')
 	
 	if auth and request.endpoint != 'logout':
@@ -147,8 +168,11 @@ def response_headers(response: Response) -> Response:
 
 @APP.before_request
 def select_profile() -> Response | None:
-	"""Выбрать профиль сессии либо первый доступный; без профилей открыть создание."""
-	if request.endpoint in ('static', 'login', 'logout') or not g.get('auth'):
+	"""Выбрать профиль сессии или первый доступный; иначе открыть создание.
+
+	Raises:
+	    sqlite3.Error: Не удалось прочитать профили или обновить сессию."""
+	if request.endpoint in ('static', 'login', 'invite', 'logout') or not g.get('auth'):
 		return None
 	db = dbm.get()
 	g.profile = db.execute(
@@ -170,7 +194,12 @@ def select_profile() -> Response | None:
 
 @APP.context_processor
 def context() -> dict[str, Any]:
-	"""Предоставить шаблонам профили, валюты, время сервера и сообщения о результате."""
+	"""Подготовить общий контекст всех Jinja-страниц.
+
+	Returns:
+	    Профили, валюты, время сервера и сообщение о результате действия.
+	Raises:
+	    sqlite3.Error: Не удалось прочитать список профилей."""
 	profiles = []
 	if g.get('auth'):
 		profiles = dbm.get().execute(
@@ -195,32 +224,55 @@ def context() -> dict[str, Any]:
 
 @APP.template_filter('money')
 def format_money(value: int) -> str:
-	"""Фильтр money: знаковые сотые в строку с запятой и разделителями тысяч."""
+	"""Отформатировать сумму для отображения в интерфейсе.
+
+	Args:
+	    value: Знаковая сумма в целых копейках/центах.
+	Returns:
+	    Строка с запятой и неразрывными разделителями тысяч."""
 	sign = '−' if value < 0 else ''
 	whole, cents = divmod(abs(value), 100)
 	return sign + f'{whole:,}'.replace(',', '\u00a0') + f',{cents:02d}'
 
 @APP.template_filter('amount_input')
 def amount_input(value: int) -> str:
-	"""Фильтр amount_input: знаковые сотые в десятичную строку для поля формы."""
+	"""Отформатировать сумму для заполнения поля формы.
+
+	Args:
+	    value: Знаковая сумма в целых копейках/центах.
+	Returns:
+	    Десятичная строка с точкой и двумя дробными знаками."""
 	whole, cents = divmod(abs(value), 100)
 	return ('-' if value < 0 else '') + f'{whole}.{cents:02d}'
 
 @APP.template_filter('localdate')
 def localdate(value: datetime) -> str:
-	"""Фильтр localdate: локальные дата и время ISO в формат ДД.ММ.ГГГГ · ЧЧ:ММ."""
+	"""Отформатировать локальные дату и время записи.
+
+	Args:
+	    value: Время операции в часовом поясе сервера.
+	Returns:
+	    Строка ДД.ММ.ГГГГ · ЧЧ:ММ."""
 	return value.strftime('%d.%m.%Y · %H:%M')
 
 @APP.template_filter('calendar_date')
 def calendar_date(value: date) -> str:
-	"""Фильтр calendar_date: дата ISO в формат ДД.ММ.ГГГГ."""
+	"""Отформатировать календарную дату статистики.
+
+	Args:
+	    value: Дата включительной границы периода.
+	Returns:
+	    Строка ДД.ММ.ГГГГ."""
 	return value.strftime('%d.%m.%Y')
 
 @APP.errorhandler(400)
 @APP.errorhandler(404)
 @APP.errorhandler(413)
 def client_error(error: HTTPException) -> tuple[str, int]:
-	"""Показать общую страницу ошибок 400, 404 и превышения размера запроса 413."""
+	"""Показать общую страницу ошибок 400, 404 и 413.
+
+	Args:
+	    error: HTTP-исключение Flask с заданным кодом."""
 	assert error.code is not None
 	messages = {
 		404: 'Страница или запись не найдена',
@@ -237,64 +289,146 @@ def client_error(error: HTTPException) -> tuple[str, int]:
 #  Web routers
 # ====================
 
+def _check_password(password: str) -> Literal[200, 401, 429]:
+	"""Проверить пароль с общим для формы и приглашений лимитом по IP.
+
+	Args:
+	    password: Пароль из формы или ссылки; пустая строка разрешена.
+	Returns:
+	    200 при успехе, 401 при неверном пароле, 429 при исчерпанном лимите.
+	    При отказе g.error содержит сообщение для страницы входа.
+	Raises:
+	    sqlite3.Error: Не удалось зарезервировать или сбросить попытку.
+	"""
+	db = dbm.get()
+	address, now = request.remote_addr or 'local', time.time()
+	# Резервируем попытку до дорогостоящей проверки хеша, исключая гонку запросов.
+	with db:
+		db.execute('BEGIN IMMEDIATE')
+		db.execute('DELETE FROM login_attempts WHERE window_started < ?', (now - 900,))
+		attempt = db.execute(
+			'SELECT count FROM login_attempts WHERE address = ?', (address,),
+		).fetchone()
+		if attempt and attempt['count'] >= config.get().max_login_attempts:
+			g.error = 'Слишком много попыток. Попробуйте через 15 минут.'
+			return 429
+		db.execute(
+			'INSERT INTO login_attempts VALUES (?, 1, ?) '
+			'ON CONFLICT(address) DO UPDATE SET count = count + 1',
+			(address, now),
+		)
+	if len(password) > 512 or not check_password_hash(config.get().password_hash, password):
+		g.error = 'Неверный пароль'
+		return 401
+	with db:
+		db.execute('DELETE FROM login_attempts WHERE address = ?', (address,))
+	return 200
+
+def _authorize(profile_id: int | None = None) -> Response:
+	"""Создать сессию или переключить профиль существующей после проверки пароля.
+
+	Args:
+	    profile_id: Проверенный ID приглашения; None выбирает профиль при следующем запросе.
+	Returns:
+	    Перенаправление на обзор с cookie сессии и без пароля в адресе.
+	Raises:
+	    sqlite3.Error: Не удалось сохранить сессию или выбранный профиль.
+	"""
+	with dbm.get() as db:
+		if g.auth:
+			token = request.cookies[COOKIE]
+			db.execute(
+				'UPDATE auth_sessions SET profile_id=? WHERE token_hash=?',
+				(profile_id, g.auth.token_hash),
+			)
+		else:
+			token = secrets.token_urlsafe(32)
+			db.execute(
+				'INSERT INTO auth_sessions '
+				'(token_hash, password_fingerprint, csrf_token, profile_id) VALUES (?, ?, ?, ?)',
+				(config.token_hash(token), config.get().password_fingerprint,
+				 secrets.token_urlsafe(32), profile_id),
+			)
+	response = redirect(url_for('overview'))
+	_set_session_cookie(response, token)
+	response.delete_cookie(LOGIN_COOKIE)
+	return response
+
 @APP.route('/login', methods=['GET', 'POST'])
 def login() -> ResponseReturnValue:
-	"""Показать вход или проверить пароль с ограничением попыток; создать сессию."""
+	"""Показать вход или проверить пароль и создать сессию.
+
+	Ошибочный пароль даёт 401, превышение лимита попыток по IP — 429.
+	Raises:
+	    sqlite3.Error: Не удалось учесть попытку или сохранить сессию.
+	"""
 	if g.auth:
 		return redirect(url_for('overview'))
-
 	status = 200
 	if request.method == 'POST':
-		db = dbm.get()
-		address, now = request.remote_addr or 'local', time.time()
-		# Reserve the attempt atomically before the costly password check.
+		status = _check_password(request.form.get('password', ''))
+		if status == 200:
+			return _authorize()
+	return render_template('login.html'), status
 
-		with db:
-			db.execute('BEGIN IMMEDIATE')
-			db.execute('DELETE FROM login_attempts WHERE window_started < ?', (now - 900,))
-			attempt = db.execute(
-				'SELECT * FROM login_attempts WHERE address = ?', (address,)
-			).fetchone()
+@APP.get('/invite')
+def invite() -> ResponseReturnValue:
+	"""Проверить пароль ссылки и открыть указанный профиль.
 
-			if attempt and attempt['count'] >= config.get().max_login_attempts:
-				g.error = 'Слишком много попыток. Попробуйте через 15 минут.'
-				return render_template('login.html'), 429
-			db.execute(
-				'INSERT INTO login_attempts VALUES (?, 1, ?) '
-				'ON CONFLICT(address) DO UPDATE SET count = count + 1',
-				(address, now)
+	Параметры запроса: profile_id и password; пустой пароль передаётся явно.
+	Ошибочный пароль даёт 401, исчерпанный общий лимит попыток — 429.
+	Raises:
+	    BadRequest: Не передан пароль или неверно записан ID профиля.
+	    NotFound: Профиль удалён или не существует.
+	    sqlite3.Error: Не удалось проверить доступ или сохранить сессию.
+	"""
+	profile_id = request.args.get('profile_id', type=int)
+	if profile_id is None or not 0 < profile_id <= 9223372036854775807 or 'password' not in request.args:
+		abort(400, description='В ссылке отсутствует пароль или указан неверный профиль')
+	status = _check_password(request.args['password'])
+	if status != 200:
+		return render_template('login.html'), status
+	if dbm.get().execute('SELECT id FROM profiles WHERE id=?', (profile_id,)).fetchone() is None:
+		abort(404)
+	return _authorize(profile_id)
+
+@APP.get('/profiles/share')
+def share_profile() -> str:
+	"""Показать текстовую ссылку и локальный QR-код текущего профиля.
+
+	Без server.public_node показать подсказку настройки; слишком длинная ссылка
+	остаётся доступна текстом, если превышена стандартная вместимость QR-кода.
+	Raises:
+	    sqlite3.Error: Не удалось определить профиль при подготовке запроса.
+	"""
+	settings = config.get()
+	link, qr_image, qr_error = '', '', ''
+	if settings.public_node:
+		link = f'{settings.public_link_base}/invite?' + urlencode({
+			'profile_id': g.profile['id'], 'password': settings.password,
+		})
+
+		try:
+			qr_image = segno.make_qr(link, error='L').svg_data_uri(
+				scale=4, light='white', dark='black'
+			)
+		except segno.DataOverflowError:
+			qr_error = (
+				'Ссылка слишком длинная для QR-кода. '
+				'Скопируйте её текстом или сократите пароль в конфигурации.'
 			)
 
-		password = request.form.get('password', '')
-		if (len(password) <= 512
-			and check_password_hash(config.get().password_hash, password)):
-			token = secrets.token_urlsafe(32)
-
-			with db:
-				db.execute('DELETE FROM login_attempts WHERE address = ?', (address,))
-				db.execute(
-					'INSERT INTO auth_sessions'
-					'(token_hash, password_fingerprint, csrf_token)'
-					'VALUES (?, ?, ?)',
-					(
-						config.token_hash(token),
-						config.get().password_fingerprint,
-						secrets.token_urlsafe(32)
-					)
-				)
-
-			response = redirect(url_for('overview'))
-			_set_session_cookie(response, token)
-			response.delete_cookie(LOGIN_COOKIE)
-			return response
-
-		g.error, status = 'Неверный пароль', 401
-
-	return render_template('login.html'), status
+	return render_template(
+		'share_profile.html', active='settings', invite_link=link,
+		qr_image=qr_image, qr_error=qr_error,
+	)
 
 @APP.post('/logout')
 def logout() -> Response:
-	"""Отозвать только текущую сессию в БД и удалить её cookie из браузера."""
+	"""Отозвать текущую сессию и удалить её cookie из браузера.
+
+	Raises:
+	    sqlite3.Error: Не удалось удалить сессию."""
 	with dbm.get() as db:
 		db.execute('DELETE FROM auth_sessions WHERE token_hash = ?', (g.auth.token_hash,))
 
@@ -304,7 +438,11 @@ def logout() -> Response:
 
 @APP.get('/')
 def overview() -> str:
-	"""Показать текущие балансы и две группы статистики за выбранный период."""
+	"""Показать балансы и текущую/плановую статистику выбранного периода.
+
+	Raises:
+	    BadRequest: Неизвестная валюта или некорректный период.
+	    sqlite3.Error: Не удалось прочитать данные профиля."""
 	entries = fetch_entries_for(g.profile['id'])
 	period = request.args.get('period', 'month')
 	currency = request.args.get('currency', 'RUB')
@@ -334,7 +472,14 @@ def overview() -> str:
 	)
 
 def _fetch_catalog(table: Literal['categories', 'tags']) -> list[sqlite3.Row]:
-	"""Получить категории или теги текущего профиля в порядке названий."""
+	"""Прочитать справочник текущего профиля.
+
+	Args:
+	    table: categories или tags; имя берётся только из кода приложения.
+	Returns:
+	    Строки справочника в порядке названий без учёта регистра ASCII.
+	Raises:
+	    sqlite3.Error: Не удалось прочитать справочник."""
 	return dbm.get().execute(
 		f'SELECT * FROM {table} WHERE profile_id = ? ORDER BY name COLLATE NOCASE',
 		(g.profile['id'],)
@@ -342,10 +487,13 @@ def _fetch_catalog(table: Literal['categories', 'tags']) -> list[sqlite3.Row]:
 
 @APP.get('/entries')
 def entry_list() -> str:
-	"""Отфильтровать журнал и показать текущие и будущие записи отдельными группами.
-	
-	Все переданные tag должны присутствовать; category_id=none означает NULL.
-	Фильтр валюты учитывает обе стороны трансфера; даты включительны."""
+	"""Показать отфильтрованный журнал с отдельной группой будущих записей.
+
+	Фильтр требует все выбранные теги; category_id=none выбирает NULL.
+	Валюта учитывает обе стороны трансфера, даты включительны.
+	Raises:
+	    BadRequest: Неверная дата фильтра.
+	    sqlite3.Error: Не удалось прочитать журнал или справочники."""
 	entries = fetch_entries_for(g.profile['id'])
 	args = request.args
 
@@ -397,28 +545,48 @@ def entry_list() -> str:
 @APP.route('/entries/new', methods=['GET', 'POST'])
 @APP.route('/entries/<int:entry_id>/edit', methods=['GET', 'POST'])
 def entry_form(entry_id: int | None = None) -> ResponseReturnValue:
-	"""Показать форму новой/существующей записи или сохранить её после проверки.
-	
-	При ошибке сохранить введённые значения и вернуть статус 422."""
-	entry = Entry.from_row(fetch_owned('entries', entry_id, g.profile['id'])) if entry_id is not None else None
-	selected_tags = [str(row['tag_id']) for row in dbm.get().execute(
-		'SELECT tag_id FROM entry_tags WHERE entry_id=? AND profile_id=?',
-		(entry_id, g.profile['id']),
-	)] if entry is not None else []
+	"""Показать или сохранить операцию; при ошибке ввода оставить форму с 422.
+
+	Args:
+	    entry_id: ID редактируемой записи; None открывает создание.
+	Raises:
+	    NotFound: Запись, категория или тег отсутствует в текущем профиле.
+	    sqlite3.Error: Не удалось прочитать или сохранить данные."""
+	entry = None
+	if entry_id:
+		entry = Entry.from_row(
+			fetch_owned('entries', entry_id, g.profile['id'])
+		)
+
+	selected_tags = []
+	if entry:
+		selected_tags = [
+			str(row['tag_id']) for row in dbm.get().execute(
+				'SELECT tag_id FROM entry_tags WHERE entry_id=? AND profile_id=?',
+			(entry_id, g.profile['id']),
+		)]
+
 	values: Mapping[str, str] = {}
 	if entry is not None:
 		values = {
-			'kind': entry.kind, 'amount': amount_input(abs(entry.amount)),
-			'currency': entry.currency, 'occurred_at': entry.occurred_at.isoformat(timespec='seconds'),
-			'comment': entry.comment, 'category_id': str(entry.category_id) if entry.category_id is not None else '',
+			'kind': entry.kind,
+			'amount': amount_input(abs(entry.amount)),
+			'currency': entry.currency,
+			'occurred_at': entry.occurred_at.isoformat(timespec='seconds'),
+			'comment': entry.comment,
+			'category_id': str(entry.category_id) if entry.category_id is not None else '',
 			'destination_currency': entry.destination_currency or 'USD',
-			'destination_amount': amount_input(entry.destination_amount) if entry.destination_amount is not None else '',
+			'destination_amount': (
+				amount_input(entry.destination_amount)
+				if entry.destination_amount is not None else ''
+			),
 		}
 
 	status = 200
 	if request.method == 'POST':
 		values = request.form
 		selected_tags = request.form.getlist('tags')
+
 		try:
 			save_entry(g.profile['id'], request.form, entry_id)
 			return redirect(url_for('entry_list', done='saved' if entry else 'created'))
@@ -437,18 +605,28 @@ def entry_form(entry_id: int | None = None) -> ResponseReturnValue:
 
 @APP.post('/entries/<int:entry_id>/delete')
 def delete_entry(entry_id: int) -> Response:
-	"""Необратимо удалить запись текущего профиля вместе со связями тегов."""
-	fetch_owned('entries', entry_id, g.profile['id'])
+	"""Необратимо удалить операцию вместе со связями тегов.
+
+	Args:
+	    entry_id: ID записи текущего профиля.
+	Raises:
+	    NotFound: Запись отсутствует в профиле.
+	    sqlite3.Error: Не удалось удалить запись."""
+
 	with dbm.get() as db:
-		db.execute(
+		if db.execute(
 			'DELETE FROM entries WHERE id = ? AND profile_id = ?',
 			(entry_id, g.profile['id'])
-		)
+		).rowcount == 0:
+			abort(404)
 	return redirect(url_for('entry_list', done='deleted'))
 
 @APP.route('/profiles/new', methods=['GET', 'POST'])
 def new_profile() -> ResponseReturnValue:
-	"""Показать создание профиля; после сохранения выбрать его в текущей сессии."""
+	"""Создать профиль и выбрать его; ошибки полей показать со статусом 422.
+
+	Raises:
+	    sqlite3.Error: Не удалось создать профиль или обновить сессию."""
 	status = 200
 	if request.method == 'POST':
 		try:
@@ -474,7 +652,11 @@ def new_profile() -> ResponseReturnValue:
 
 @APP.post('/profiles/switch')
 def switch_profile() -> Response:
-	"""Выбрать существующий профиль для текущей сессии без отдельного пароля."""
+	"""Выбрать существующий профиль для текущей сессии.
+
+	Raises:
+	    NotFound: Переданный profile_id не соответствует профилю.
+	    sqlite3.Error: Не удалось прочитать профиль или обновить сессию."""
 	profile = dbm.get().execute(
 		'SELECT * FROM profiles WHERE id = ?', (request.form.get('profile_id'),)
 	).fetchone()
@@ -491,7 +673,10 @@ def switch_profile() -> Response:
 
 @APP.route('/settings', methods=['GET', 'POST'])
 def settings() -> ResponseReturnValue:
-	"""Показать или изменить название и начальный капитал текущего профиля."""
+	"""Изменить название и начальный капитал; ошибки полей показать с 422.
+
+	Raises:
+	    sqlite3.Error: Не удалось прочитать или сохранить профиль."""
 	values: Mapping[str, str] = {
 		'name': g.profile['name'],
 		**{r['currency']: amount_input(r['amount']) for r in dbm.get().execute(
@@ -521,16 +706,22 @@ def settings() -> ResponseReturnValue:
 
 @APP.post('/profiles/delete')
 def delete_profile() -> Response:
-	"""Необратимо удалить профиль с журналом и справочниками; выбрать другой при следующем запросе."""
+	"""Необратимо удалить текущий профиль с журналом и справочниками.
+
+	Raises:
+	    sqlite3.Error: Не удалось удалить данные профиля."""
 	with dbm.get() as db:
-		# Delete entries before their required categories, regardless of FK cascade order.
+		# Сначала удаляем операции, чтобы их ссылки не мешали каскадному удалению категорий.
 		db.execute('DELETE FROM entries WHERE profile_id=?', (g.profile['id'],))
 		db.execute('DELETE FROM profiles WHERE id=?', (g.profile['id'],))
 	return redirect(url_for('overview', done='deleted'))
 
 @APP.get('/library')
 def library() -> str:
-	"""Показать категории и теги текущего профиля; категория по умолчанию виртуальная."""
+	"""Показать категории и теги; «Без категории» отображается без строки БД.
+
+	Raises:
+	    sqlite3.Error: Не удалось прочитать справочники."""
 	return render_template(
 		'library.html',
 		active='library',
@@ -540,9 +731,14 @@ def library() -> str:
 
 @APP.post('/library/<kind>/<action>')
 def change_library(kind: str, action: str) -> ResponseReturnValue:
-	"""Добавить, переименовать или удалить элемент справочника текущего профиля.
-	
-	Имя «Без категории» зарезервировано; удаление категории сохраняет её записи."""
+	"""Изменить справочник; неверное или повторное название показать с 422.
+
+	Args:
+	    kind: categories или tags.
+	    action: add, rename или delete; категория при удалении сохраняет записи.
+	Raises:
+	    NotFound: Неизвестный справочник, действие или ID внутри профиля.
+	    sqlite3.Error: Ошибка БД, кроме обработанного конфликта ограничений."""
 	if kind not in ('categories', 'tags') or action not in ('add', 'rename', 'delete'):
 		abort(404)
 
@@ -597,12 +793,18 @@ def change_library(kind: str, action: str) -> ResponseReturnValue:
 # ====================
 
 def init(settings: config.AppConfig, *, testing: bool = False) -> Flask:
-	"""Настроить и вернуть единственный APP процесса, не создавая новый Flask.
+	"""Настроить единственный APP процесса и создать отсутствующие таблицы.
 
-	Маршруты и обработчики зарегистрированы один раз при импорте модуля.
-	Повторный вызов заменяет настройки существующего APP, что нужно тестам.
-	Схема и данные сохраняются, автоматической миграции нет.
-	"""
+	Повторная настройка допустима до обслуживания запросов и в последовательных
+	тестах. Экземпляр Flask, маршруты, схема и имеющиеся данные сохраняются.
+	Args:
+	    settings: Проверенные настройки БД и входа.
+	    testing: Включить режим TESTING Flask.
+	Returns:
+	    Единственный экземпляр APP с применёнными настройками.
+	Raises:
+	    OSError: Каталог БД или файл схемы недоступен.
+	    sqlite3.Error: Не удалось подготовить БД или отозвать старые сессии."""
 	APP.extensions[config.CONFIG_KEY] = settings
 	APP.config['TESTING'] = testing
 	with APP.app_context():

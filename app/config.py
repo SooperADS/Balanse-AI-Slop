@@ -1,60 +1,141 @@
 """Чтение TOML и типизированные настройки единственного приложения процесса."""
 
 import hashlib
+import ipaddress
+import re
 import tomllib
-from collections.abc import Mapping
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Final, cast
 
 from flask import current_app
+from pathlib import Path
+from typing import Final, cast
+from urllib.parse import urlsplit
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from werkzeug.security import generate_password_hash
 
 # Настройки хранятся одним объектом, отдельно от встроенных параметров Flask.
 CONFIG_KEY: Final = 'app.config'
 
 def token_hash(value: str) -> str:
-	"""Вернуть стабильный SHA-256 токена или пароля для поиска и отзыва сессий."""
+	"""Вычислить стабильный SHA-256 для поиска и отзыва сессий.
+
+	Args:
+	    value: Исходный токен или пароль.
+	Returns:
+	    Хеш в шестнадцатеричной записи."""
 	return hashlib.sha256(value.encode()).hexdigest()
 
 @dataclass(frozen=True, slots=True)
 class AppConfig:
-	"""Проверенные настройки; исходный пароль в объекте не сохраняется.
+	"""Настройки БД, входа и публичных ссылок.
 
-	Хеш Werkzeug проверяет пароль, а стабильный fingerprint отзывает сессии.
-	Эти значения выполняют разные задачи и не восстанавливаются друг из друга.
+	database — путь SQLite; max_login_attempts — лимит попыток за 15 минут.
+	password_hash проверяет пароль, password_fingerprint отзывает сессии.
+	password нужен для приглашений и исключён из repr; public_node — хост[:порт].
 	"""
 
 	database: Path
 	password_hash: str
 	password_fingerprint: str
 	max_login_attempts: int = 5
+	password: str = field(default='', repr=False)
+	public_node: str = ''
+
+	@property
+	def public_link_base(self) -> str | None:
+		return f'http://{self.public_node}' if self.public_node != '' else None
 
 	@classmethod
 	def from_password(
-		cls, database: Path, password: str, max_login_attempts: int = 5
+		cls,
+		database: Path,
+		password: str,
+		max_login_attempts: int = 5, *,
+		public_node: str = '',
 	) -> 'AppConfig':
-		"""Создать настройки с хешем проверки и стабильным отпечатком пароля."""
+		"""Подготовить настройки из открытого пароля.
+
+		Args:
+		    database: Путь SQLite.
+		    password: Общий пароль; пустая строка разрешена.
+		    max_login_attempts: Допустимые попытки с одного IP за 15 минут.
+		    public_node: Публичный хост[:порт]; пустая строка отключает приглашения.
+		Returns:
+		    Настройки с хешем, отпечатком и паролем для ссылок.
+		Raises:
+		    ValueError: Публичный адрес содержит схему, путь или неверный хост/порт."""
+		public_node = _public_node(public_node)
 		return cls(
 			database,
 			generate_password_hash(password),
 			token_hash(password),
-			max_login_attempts
+			max_login_attempts,
+			password,
+			public_node,
 		)
 
+def _public_node(raw: object) -> str:
+	"""Проверить и нормализовать публичный узел без схемы и пути.
+
+	Args:
+	    raw: Хост[:порт] из TOML; IPv6 записывается в квадратных скобках.
+	Returns:
+	    Узел с ASCII-доменом либо пустая строка для отключённых приглашений.
+	Raises:
+	    ValueError: Неверный тип, хост, порт или присутствуют лишние части URL.
+	"""
+	message = 'server.public_node: укажите хост или IP с портом, без схемы и пути'
+	if not isinstance(raw, str):
+		raise ValueError(message)
+	elif not raw:
+		return ''
+	elif any(char.isspace() for char in raw) or any(char in raw for char in '/\\@?#%'):
+		raise ValueError(message)
+
+	try:
+		parts = urlsplit('//' + raw)
+		host, port = parts.hostname, parts.port
+		if not host or raw.endswith(':') or (port is not None and not 1 <= port <= 65535):
+			raise ValueError(message)
+		elif ':' in host:
+			host = '[' + ipaddress.IPv6Address(host).compressed + ']'
+		else:
+			host = host.encode('idna').decode('ascii').lower()
+			if len(host) > 253 or any(
+				not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', label)
+				for label in host.rstrip('.').split('.')
+			):
+				raise ValueError(message)
+
+		return host + (f':{port}' if port is not None else '')
+	except (ValueError, UnicodeError):
+		raise ValueError(message) from None
+
 def _section(data: Mapping[str, object], name: str) -> Mapping[str, object]:
-	"""Получить таблицу TOML или сообщить о неверном типе секции."""
+	"""Получить таблицу TOML; отсутствующая секция считается пустой.
+
+	Args:
+	    data: Разобранная конфигурация.
+	    name: Имя секции.
+	Returns:
+	    Содержимое секции.
+	Raises:
+	    ValueError: Секция имеет тип, отличный от таблицы TOML."""
 	section = data.get(name, {})
 	if not isinstance(section, dict):
 		raise ValueError(f'Секция [{name}] должна быть таблицей TOML')
 	return cast(Mapping[str, object], section)
 
 def load(root: Path) -> tuple[AppConfig, str, int]:
-	"""Прочитать настройки и вернуть объект приложения, адрес и порт.
+	"""Прочитать конфигурацию; при первом запуске создать файл с правами 600.
 
-	При первом запуске создать config.toml с правами 600 и вывести подсказку.
-	Пустой пароль разрешён; относительный путь базы отсчитывается от root.
-	"""
+	Args:
+	    root: Каталог конфигурации и база относительных путей SQLite.
+	Returns:
+	    Настройки приложения, адрес прослушивания и порт.
+	Raises:
+	    ValueError: Файл только создан, TOML неверен или настройки недопустимы.
+	    OSError: Файл конфигурации недоступен для чтения или записи."""
 	path = root / 'config.toml'
 	if not path.exists():
 		with path.open('x', encoding='utf-8') as file:
@@ -82,14 +163,26 @@ def load(root: Path) -> tuple[AppConfig, str, int]:
 	host, port = server.get('host', '0.0.0.0'), server.get('port', 8080)
 	if not isinstance(host, str) or not host or type(port) is not int or not 1 <= port <= 65535:
 		raise ValueError('Проверьте server.host и server.port в config.toml')
+	public_node = _public_node(server.get('public_node', ''))
 
 	storage = _section(data, 'storage')
 	database = storage.get('database', 'data/budget.sqlite3')
 	if not isinstance(database, str) or not database:
 		raise ValueError('Укажите путь storage.database в config.toml')
 
-	return AppConfig.from_password((root / database).resolve(), password, max_attempts), host, port
+	return AppConfig.from_password(
+		(root / database).resolve(),
+		password,
+		max_attempts,
+		public_node=public_node,
+	), host, port
 
 def get() -> AppConfig:
-	"""Вернуть единый объект настроек из активного контекста Flask."""
+	"""Получить настройки единственного приложения в активном контексте.
+
+	Returns:
+	    Объект AppConfig, установленный init().
+	Raises:
+	    RuntimeError: Нет контекста Flask.
+	    KeyError: Приложение ещё не настроено."""
 	return cast(AppConfig, current_app.extensions[CONFIG_KEY])

@@ -79,6 +79,28 @@ class RuntimeTest(unittest.TestCase):
 		with self.assertRaises(tomllib.TOMLDecodeError):
 			self.config('not toml')
 
+	def test_public_node_validation_and_password_repr(self) -> None:
+		"""Проверить домены/IP с портом, запрет частей URL и скрытие пароля в repr."""
+		for node, expected in (
+			('', ''), ('budget.home', 'budget.home'),
+			('192.168.1.10:8080', '192.168.1.10:8080'),
+			('Бюджет.рф:80', 'xn--90agdd5d8c.xn--p1ai:80'),
+			('[::1]:8080', '[::1]:8080'), ('[2001:db8::1]', '[2001:db8::1]'),
+		):
+			with self.subTest(node=node):
+				cfg, _, _ = self.config('[auth]\npassword="private secret"\n[server]\npublic_node="' + node + '"')
+				self.assertEqual(cfg.public_node, expected)
+				self.assertEqual(cfg.password, 'private secret')
+				self.assertNotIn('private secret', repr(cfg))
+		for value in (
+			'42', 'false', '"http://budget.home"', '"budget.home/path"',
+			'"user:secret@budget.home"', '"budget.home?x=1"', '"budget.home#part"',
+			'"budget.home:0"', '"budget.home:65536"', '"budget.home:"',
+			'"budget.home:abc"', '"budget home"', '"::1"', '"-budget.home"',
+		):
+			with self.subTest(value=value), self.assertRaises(ValueError):
+				self.config('[server]\npublic_node=' + value)
+
 	def test_waitress_http_smoke(self) -> None:
 		"""Запустить сервер в дочернем процессе, проверить вход и гарантированно остановить его."""
 		with socket.socket() as probe:

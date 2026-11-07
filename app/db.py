@@ -9,10 +9,13 @@ from flask import g
 from . import config
 
 def get() -> sqlite3.Connection:
-	"""Переиспользовать соединение запроса с Row и включёнными внешними ключами.
+	"""Открыть или переиспользовать SQLite-соединение текущего контекста.
 
-	Изменения фиксирует вызывающий код через контекстный менеджер соединения.
-	"""
+	Returns:
+	    Соединение с sqlite3.Row и включёнными внешними ключами; коммит у вызывающего.
+	Raises:
+	    RuntimeError: Нет контекста Flask.
+	    sqlite3.Error: Базу не удалось открыть или настроить."""
 	connection = cast(sqlite3.Connection | None, g.get('db'))
 	if connection is None:
 		connection = sqlite3.connect(config.get().database, timeout=10)
@@ -22,12 +25,22 @@ def get() -> sqlite3.Connection:
 	return connection
 
 def initialize() -> None:
-	"""Создать каталог и отсутствующие таблицы; существующие данные сохраняются."""
+	"""Создать каталог БД и отсутствующие таблицы, сохранив имеющиеся данные.
+
+	Raises:
+	    OSError: Каталог БД или файл схемы недоступен.
+	    sqlite3.Error: Не удалось открыть БД или выполнить схему."""
 	config.get().database.parent.mkdir(parents=True, exist_ok=True)
 	get().executescript(Path(__file__).with_name('schema.sql').read_text(encoding='utf-8'))
 
 def close(_error: BaseException | None = None) -> None:
-	"""Закрыть соединение при выходе из контекста; _error передаётся Flask."""
+	"""Закрыть соединение при завершении контекста Flask.
+
+	Args:
+	    _error: Исключение запроса, переданное Flask; на закрытие не влияет.
+	Raises:
+	    RuntimeError: Нет контекста Flask.
+	    sqlite3.Error: Не удалось закрыть соединение."""
 	connection = cast(sqlite3.Connection | None, g.pop('db', None))
 	if connection is not None:
 		connection.close()

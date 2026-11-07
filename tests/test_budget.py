@@ -4,6 +4,8 @@ import re
 import sqlite3
 import tempfile
 import unittest
+from html import unescape
+from urllib.parse import parse_qs, urlsplit
 
 from collections.abc import Mapping
 from datetime import datetime, timedelta
@@ -40,6 +42,7 @@ class BudgetTest(unittest.TestCase):
 			database=Path(self.temp.name) / 'test.sqlite3',
 			password_hash=generate_password_hash('test-password', method='pbkdf2:sha256:1000'),
 			password_fingerprint=config.token_hash('test-password'),
+			password='test-password',
 		)
 		self.app = init(self.config, testing=True)
 		self.client = self.app.test_client()
@@ -123,6 +126,7 @@ class BudgetTest(unittest.TestCase):
 			'/entries/new',
 			'/library',
 			'/settings',
+			'/profiles/share',
 			'/profiles/new',
 			'/?period=day&date=2020-05-12',
 			'/?period=year&date=2020&currency=EUR'
@@ -140,6 +144,106 @@ class BudgetTest(unittest.TestCase):
 			response = self.client.get(path)
 			self.assertEqual(response.status_code, 200)
 			response.close()
+
+	def invite_link(self, client: FlaskClient | None = None) -> str:
+		"""Извлечь реальную ссылку приглашения из настроенной страницы профиля."""
+		response = (client or self.client).get('/profiles/share')
+		self.assertEqual(response.status_code, 200)
+		match = re.search(r'data-invite-link[^>]*>([^<]+)</textarea>', response.get_data(as_text=True))
+		assert match is not None
+		return unescape(match.group(1))
+
+	def test_invitation_url_qr_and_profile_selection(self) -> None:
+		"""Проверить публичный узел, URL-кодирование, QR и вход именно в приглашённый профиль."""
+		password = 'Пароль & + ? # / ='
+		self.config = config.AppConfig.from_password(
+			self.config.database, password, public_node='budget.home:8081',
+		)
+		init(self.config, testing=True)
+		self.login(password=password)
+		self.post('/profiles/new', {'name': 'Работа'})
+		link = self.invite_link()
+		parts = urlsplit(link)
+		self.assertEqual((parts.scheme, parts.netloc, parts.path), ('http', 'budget.home:8081', '/invite'))
+		self.assertEqual(parse_qs(parts.query), {'profile_id': ['2'], 'password': [password]})
+		page = self.client.get('/profiles/share')
+		self.assertIn('data:image/svg+xml', page.get_data(as_text=True))
+		self.assertEqual(page.headers['Referrer-Policy'], 'no-referrer')
+		guest = self.app.test_client()
+		response = guest.get('/invite?' + parts.query)
+		self.assertEqual(response.status_code, 302)
+		self.assertEqual(response.location, '/')
+		self.assertNotIn('password', response.location)
+		self.assertIsNotNone(guest.get_cookie(COOKIE))
+		self.assertIn('Работа', guest.get('/settings').get_data(as_text=True))
+		cookie = guest.get_cookie(COOKIE)
+		assert cookie is not None
+		self.assertEqual(self.scalar('SELECT profile_id FROM auth_sessions WHERE token_hash=?',
+			(config.token_hash(cookie.value),)), 2)
+		guest.set_cookie(COOKIE, cookie.value, domain='untrusted.example')
+		text = guest.get('/profiles/share', headers={'Host': 'untrusted.example'}).get_data(as_text=True)
+		self.assertIn('http://budget.home:8081/invite?', text)
+		self.assertNotIn('http://untrusted.example/invite?', text)
+
+	def test_invitation_switches_existing_session(self) -> None:
+		"""Приглашение меняет профиль существующей сессии после проверки пароля."""
+		self.post('/profiles/new', {'name': 'Второй'})
+		cookie = self.client.get_cookie(COOKIE)
+		assert cookie is not None
+		before = self.scalar('SELECT count(*) FROM auth_sessions')
+		response = self.client.get('/invite?profile_id=1&password=test-password')
+		self.assertEqual(response.status_code, 302)
+		self.assertEqual(self.scalar('SELECT count(*) FROM auth_sessions'), before)
+		self.assertEqual(self.scalar('SELECT profile_id FROM auth_sessions WHERE token_hash=?',
+			(config.token_hash(cookie.value),)), 1)
+		self.assertEqual(self.client.get_cookie(COOKIE), cookie)
+
+	def test_invitation_failures_and_shared_attempt_limit(self) -> None:
+		"""Проверить обязательные параметры, удалённый профиль и общий лимит входа."""
+		guest = self.app.test_client()
+		for query in ('profile_id=1', 'password=test-password', 'profile_id=no&password=',
+		              'profile_id=0&password=', 'profile_id=999999999999999999999&password='):
+			with self.subTest(query=query):
+				self.assertEqual(guest.get('/invite?' + query).status_code, 400)
+		self.assertEqual(guest.get('/invite?profile_id=999&password=test-password').status_code, 404)
+		for _ in range(4):
+			response = guest.get('/invite?profile_id=1&password=wrong')
+			self.assertEqual(response.status_code, 401)
+			self.assertIn('action="/login"', response.get_data(as_text=True))
+		self.assertEqual(self.login(guest, 'wrong').status_code, 401)
+		self.assertEqual(guest.get('/invite?profile_id=1&password=test-password').status_code, 429)
+		self.assertEqual(self.login(guest).status_code, 429)
+		self.assertIsNone(guest.get_cookie(COOKIE))
+
+	def test_invitation_empty_password_and_password_change(self) -> None:
+		"""Явный пустой пароль допустим; старое приглашение после смены пароля отклоняется."""
+		init(config.AppConfig.from_password(self.config.database, ''), testing=True)
+		guest = self.app.test_client()
+		self.assertEqual(guest.get('/invite?profile_id=1&password=').status_code, 302)
+		self.assertEqual(guest.get('/').status_code, 200)
+		init(self.config, testing=True)
+		self.assertEqual(guest.get('/invite?profile_id=1&password=').status_code, 401)
+		self.assertEqual(guest.get('/').status_code, 302)
+
+	def test_sharing_disabled_without_public_node(self) -> None:
+		"""Без публичного узла приглашение не формируется; вместо него показана настройка."""
+		text = self.client.get('/profiles/share').get_data(as_text=True)
+		self.assertIn('public_node', text)
+		self.assertNotIn('data-invite-link', text)
+		self.assertNotIn('test-password', text)
+
+	def test_sharing_keeps_text_when_qr_capacity_is_exceeded(self) -> None:
+		"""Предельный Unicode-пароль не ломает страницу, если ссылка не помещается в QR."""
+		self.config = config.AppConfig.from_password(
+			self.config.database, '😀' * 512, public_node='budget.home',
+		)
+		init(self.config, testing=True)
+		guest = self.app.test_client()
+		self.login(guest, '😀' * 512)
+		page = guest.get('/profiles/share')
+		self.assertEqual(page.status_code, 200)
+		self.assertIn('Ссылка слишком длинная', page.get_data(as_text=True))
+		self.assertIn('data-invite-link', page.get_data(as_text=True))
 
 	def test_exact_money_and_independent_balances(self) -> None:
 		"""Проверить точность сотых и независимость балансов валют."""

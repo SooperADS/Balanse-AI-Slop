@@ -181,14 +181,18 @@ if (entryForm) {
 			rate.required = transfer;
 			if (amountLabel) amountLabel.textContent = transfer ? 'Сумма списания' : 'Сумма';
 			if (!transfer) return;
+			// Ошибки выводятся у полей; preview содержит только результат расчёта.
+			preview.value = '';
+			preview.hidden = true;
 			const amount = parseFixed(source.value, 2);
 			if (changed === rate) {
 				rate.dataset.computed = 'false';
 				numerator = parseFixed(rate.value, 8);
 				denominator = 100000000n;
-				if (!numerator) { preview.value = 'Укажите положительный курс, до 8 знаков после запятой.'; return; }
+				if (!numerator) return;
 			}
-			if (!amount) { preview.value = 'Укажите положительную сумму списания.'; return; }
+			if (!amount) return;
+			if (numerator === null && rate.value.trim() && changed !== destination && changed !== null) return;
 			if (changed === destination || changed === null || numerator === null) {
 				const received = parseFixed(destination.value, 2);
 				if (received) {
@@ -198,7 +202,6 @@ if (entryForm) {
 					rate.dataset.computed = 'true';
 				} else {
 					if (changed === destination) { rate.value = ''; numerator = null; }
-					preview.value = 'Укажите курс или сумму получения – второе поле вычислится автоматически.';
 					return;
 				}
 			} else if (denominator !== null) {
@@ -206,9 +209,9 @@ if (entryForm) {
 				destination.value = formatFixed(received, 2);
 			}
 			if (sourceCurrency.value === destinationCurrency.value) {
-				preview.value = 'Исходная и получаемая валюты должны различаться.';
 				return;
 			}
+			preview.hidden = false;
 			preview.value = `${source.value} ${sourceCurrency.value} → ${destination.value} ${destinationCurrency.value}. Сохраняются обе суммы; курс вычисляется по ним.`;
 		};
 		entryForm.addEventListener('input', event => updateTransfer(event.target));
@@ -224,14 +227,26 @@ if (entryForm) {
 	/** Начало монотонного отсчёта для продвижения серверных часов. @type {number} */
 	const openedAt = performance.now();
 	if (occurredAt && plannedNote && Number.isFinite(serverEpoch)) {
+		/** Текущее локальное время сервера с учётом времени после открытия формы. @returns {string} */
+		const serverNow = () => new Date(serverEpoch + performance.now() - openedAt).toISOString().slice(0, 19);
 		/** Показать пояснение будущей даты по времени сервера, независимо от зоны телефона. @returns {void} */
 		const updatePlannedNote = () => {
-			const now = new Date(serverEpoch + performance.now() - openedAt).toISOString().slice(0, 19);
+			const now = serverNow();
 			const planned = occurredAt.value > now;
 			plannedNote.hidden = !planned;
 			plannedNote.textContent = 'Запланированная запись: войдёт в текущий баланс, когда наступят указанные дата и время.';
 		};
 		occurredAt.addEventListener('input', updatePlannedNote);
+		/** @type {HTMLButtonElement | null} */
+		const nowButton = entryForm.querySelector('[data-set-now]');
+		if (nowButton) {
+			nowButton.hidden = false;
+			nowButton.addEventListener('click', () => {
+				occurredAt.value = serverNow();
+				occurredAt.dispatchEvent(new Event('input', { bubbles: true }));
+				validateField(occurredAt, true);
+			});
+		}
 		updatePlannedNote();
 	}
 }
@@ -320,9 +335,40 @@ document.querySelectorAll('form').forEach(form => {
 	form.noValidate = true;
 	fields.forEach(field => field.addEventListener('blur', () => validateField(field, true)));
 	form.addEventListener('input', () => fields.forEach(field => { if (field.dataset.touched) validateField(field, true); }));
-	form.addEventListener('change', () => fields.forEach(field => { if (field.dataset.touched) validateField(field, true); }));
+	form.addEventListener('change', () => {
+		fields.forEach(field => {
+			if (field.dataset.touched || (field.name === 'destination_currency' && !field.matches(':disabled'))) validateField(field, true);
+		});
+	});
 	form.addEventListener('submit', event => {
 		const invalid = Array.from(fields).filter(field => !validateField(field, true));
 		if (invalid.length) { event.preventDefault(); invalid[0]?.focus(); }
 	});
 });
+
+/** Текст приглашения; доступен для ручного копирования и без Clipboard API. @type {HTMLTextAreaElement | null} */
+const inviteLink = document.querySelector('[data-invite-link]');
+/** Кнопка копирования приглашения. @type {HTMLButtonElement | null} */
+const copyInvite = document.querySelector('[data-copy-invite]');
+/** Результат копирования для визуального и голосового вывода. @type {HTMLElement | null} */
+const copyStatus = document.querySelector('[data-copy-status]');
+if (inviteLink && copyInvite && copyStatus) {
+	copyInvite.hidden = false;
+	copyInvite.addEventListener('click', /** @returns {Promise<void>} */ async () => {
+		let copied = false;
+		try {
+			if (navigator.clipboard && window.isSecureContext) {
+				await navigator.clipboard.writeText(inviteLink.value);
+				copied = true;
+			}
+		} catch {
+			// HTTP в домашней сети обычно не даёт доступа к Clipboard API.
+		}
+		if (!copied) {
+			inviteLink.focus();
+			inviteLink.select();
+			try { copied = document.execCommand('copy'); } catch { copied = false; }
+		}
+		copyStatus.textContent = copied ? 'Ссылка скопирована' : 'Ссылка выделена. Скопируйте её вручную.';
+	});
+}

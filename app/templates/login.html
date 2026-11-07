@@ -8,7 +8,7 @@
 	<span class="eyebrow">ДОМАШНЯЯ БУХГАЛТЕРИЯ</span>
 	<h1>Всё под контролем</h1>
 	<p class="muted">Войдите, чтобы продолжить вести свой бюджет</p>
-	<form method="post" class="stack">{{ csrf() }}
+	<form method="post" action="{{ url_for('login') }}" class="stack">{{ csrf() }}
 		<label>Пароль<input type="password" name="password" autocomplete="current-password" autofocus maxlength="512"
 				placeholder="Введите пароль приложения">
 		</label>

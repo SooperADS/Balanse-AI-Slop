@@ -42,6 +42,7 @@
 {% if not creating %}<section class="panel form-panel access-panel">
 	<h2>Доступ к приложению</h2>
 	<p class="muted">Вход сохраняется в этом браузере до выхода или смены пароля приложения.</p>
+	<a class="button secondary" href="{{ url_for('share_profile') }}">Поделиться профилем</a>
 	<form method="post" action="{{ url_for('logout') }}">{{ csrf() }}
 		<button class="button secondary">
 			{{ icon('logout') }} Выйти на этом устройстве

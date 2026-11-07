@@ -25,13 +25,12 @@
 		</fieldset>
 		<div class="form-grid amount-row">
 			<label>
-				<span data-source-amount-label>Сумма</span>
-				<span class="required">*</span>
+				<span class="field-caption"><span data-source-amount-label>Сумма</span> <span class="required">*</span></span>
 				<input name="amount" value="{{ values.get('amount', '') }}" inputmode="decimal" required maxlength="24"
 					placeholder="0,00" autofocus>
 			</label>
 			<label>
-				Валюта
+				<span class="field-caption">Валюта</span>
 				<select name="currency">
 					{% for c in currencies %}
 					<option{% if values.get('currency', 'RUB' )==c %} selected{% endif %}>
@@ -43,12 +42,12 @@
 		<fieldset class="transfer-fields" data-transfer-fields>
 			<legend>Конвертация валют</legend>
 			<div class="form-grid amount-row">
-				<label>Сумма получения
+				<label><span class="field-caption">Сумма получения</span>
 					<input name="destination_amount" value="{{ values.get('destination_amount', '') }}"
 						inputmode="decimal" maxlength="24" placeholder="0,00">
 				</label>
 				<label>
-					Получаемая валюта
+					<span class="field-caption">Получаемая валюта</span>
 					<select name="destination_currency">
 						{% for c in currencies %}
 						<option{% if values.get('destination_currency', 'USD' )==c %} selected{% endif %}>{{ c }}
@@ -60,17 +59,16 @@
 			<label>Курс: количество получаемой валюты за 1 единицу исходной
 				<input data-exchange-rate inputmode="decimal" maxlength="64" placeholder="Например, 90 или 0,01111111">
 			</label>
-			<output class="transfer-preview helper" data-transfer-preview aria-live="polite">
-				Измените курс или сумму
-				получения – второе поле пересчитается автоматически. Сумма получения округляется до
-				копейки/цента.
-			</output>
+			<output class="transfer-preview helper" data-transfer-preview aria-live="polite" hidden></output>
 		</fieldset>
 		<div class="form-grid">
-			<label>Дата и время <span class="required">*</span>
-				<input type="datetime-local" name="occurred_at" value="{{ values.get('occurred_at', now_local) }}"
+			<div class="datetime-field">
+				<div class="field-heading"><label for="occurred-at">Дата и время <span class="required">*</span></label>
+					<button type="button" class="now-button" data-set-now hidden>Сейчас</button>
+				</div>
+				<input id="occurred-at" type="datetime-local" name="occurred_at" value="{{ values.get('occurred_at', now_local) }}"
 					step="1" required>
-			</label>
+			</div>
 			<label>
 				Категория
 				<select name="category_id">

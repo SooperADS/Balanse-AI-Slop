@@ -1,0 +1,35 @@
+{% extends 'base.html' %}
+{% block title %}Поделиться профилем – Баланс{% endblock %}
+{% block content %}
+<div class="page-heading">
+	<div>
+		<span class="eyebrow">ДОСТУП К ПРОФИЛЮ</span>
+		<h1>Поделиться<span class="accent">.</span></h1>
+		<p class="muted">{{ g.profile.name }} · Вход по ссылке или QR-коду</p>
+	</div>
+	<a class="text-link" href="{{ url_for('settings') }}">К настройкам {{ icon('arrow') }}</a>
+</div>
+<section class="panel form-panel share-panel">
+	{% if invite_link %}
+	<p class="helper">Ссылка содержит общий пароль приложения и открывает профиль «{{ g.profile.name }}».
+		Получатель также сможет переключаться между всеми профилями.
+		Ссылка действует до смены пароля или удаления профиля.</p>
+	{% if qr_image %}
+	<img class="invite-qr" src="{{ qr_image }}" alt="QR-код для входа в профиль {{ g.profile.name }}">
+	{% else %}
+	<p class="error-notice" role="status">{{ qr_error }}</p>
+	{% endif %}
+	<label for="invite-link">Ссылка для входа</label>
+	<textarea id="invite-link" class="invite-link" readonly rows="3" data-invite-link spellcheck="false">{{ invite_link }}</textarea>
+	<div class="form-actions">
+		<button type="button" class="button primary" data-copy-invite hidden>Скопировать ссылку</button>
+		<span class="helper" data-copy-status role="status"></span>
+	</div>
+	{% else %}
+	<h2>Настройте публичный адрес</h2>
+	<p class="muted">Укажите <code>public_node</code> в секции <code>[server]</code> файла
+		<code>config.toml</code> и перезапустите приложение. Значение — домен или IP с необязательным портом,
+		например <code>budget.home:8080</code> или <code>192.168.1.10:8080</code>, без схемы и пути.</p>
+	{% endif %}
+</section>
+{% endblock %}

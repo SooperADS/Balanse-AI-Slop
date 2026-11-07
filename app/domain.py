@@ -20,26 +20,26 @@ CURRENCIES: tuple[str, ...] = ('RUB', 'USD', 'EUR')
 # Символы валют используются только для отображения в шаблонах.
 SYMBOLS: dict[str, str] = {'RUB': '₽', 'USD': '$', 'EUR': '€'}
 
-# Категория по умолчанию
-DEFAULT_CATEGORY_NAME = 'Без категории'
+# Отображаемое имя отсутствующей категории; отдельной строки в БД нет.
+DEFAULT_CATEGORY_NAME: str = 'Без категории'
 
 # Вычисляемый UI-тип; в таблице entries такого столбца нет.
 EntryKind: TypeAlias = Literal['income', 'expense', 'transfer']
 
 @dataclass(frozen=True, slots=True)
 class EntryTag:
-	"""Тег записи; идентификатор родительской записи здесь не дублируется."""
+	"""Идентификатор и название тега, прикреплённого к записи."""
 
 	id: int
 	name: str
 
 @dataclass(slots=True)
 class Entry:
-	"""Запись журнала с точной суммой и единожды разобранным временем.
+	"""Запись: знаковые сотые, локальное время сервера, категория и теги.
 
-	Справочное имя категории загружается JOIN, теги — отдельным общим запросом.
-	Тип и плановое состояние не сохраняются в объекте.
-	"""
+	amount положителен для дохода; трансфер дополнительно содержит положительную
+	сумму destination_amount в destination_currency. category — имя из JOIN,
+	category_id=None означает «Без категории». Тип и планирование вычисляются."""
 
 	id: int
 	currency: str
@@ -54,13 +54,23 @@ class Entry:
 
 	@property
 	def kind(self) -> EntryKind:
-		"""Вычислить UI-тип за O(1), без обращения к БД."""
+		"""Определить тип по знаку суммы и наличию получаемой валюты.
+
+		Returns:
+		    income, expense или transfer; обращения к БД нет."""
 		if self.destination_currency is not None:
 			return 'transfer'
 		return 'income' if self.amount > 0 else 'expense'
 
 	def is_planned(self, now: datetime) -> bool:
-		"""Сравнить с единым моментом запроса; равенство означает текущую запись."""
+		"""Проверить, наступило ли время записи.
+
+		Args:
+		    now: Локальное время сервера без часового смещения.
+		Returns:
+		    True для будущей записи; равенство означает текущую запись.
+		Raises:
+		    TypeError: Смешаны даты с часовым смещением и без него."""
 		return self.occurred_at > now
 
 	@classmethod
@@ -70,7 +80,17 @@ class Entry:
 		category: str = DEFAULT_CATEGORY_NAME,
 		tags: list[EntryTag] | None = None,
 	) -> 'Entry':
-		"""Преобразовать строку SQLite без дополнительных запросов и profile_id."""
+		"""Преобразовать строку SQLite в запись без дополнительных запросов.
+
+		Args:
+		    row: Строка entries с суммами в сотых и occurred_at в ISO-формате.
+		    category: Отображаемое название категории.
+		    tags: Теги записи; переданный список переиспользуется.
+		Returns:
+		    Запись с разобранным datetime; profile_id не копируется.
+		Raises:
+		    IndexError: В строке нет нужного столбца.
+		    ValueError: В БД хранится некорректная дата."""
 		return cls(
 			id=row['id'],
 			currency=row['currency'],
@@ -86,14 +106,14 @@ class Entry:
 
 @dataclass(slots=True)
 class Totals:
-	"""Уже рассчитанные положительные суммы доходов и расходов в сотых."""
+	"""Положительные итоги доходов и расходов в сотых выбранной валюты."""
 
 	income: int = 0
 	expense: int = 0
 
 @dataclass(slots=True)
 class Breakdown:
-	"""Положительные суммы одной категории или тега в выбранной валюте."""
+	"""Название категории/тега и его положительные итоги в сотых."""
 
 	name: str
 	income: int = 0
@@ -101,7 +121,7 @@ class Breakdown:
 
 @dataclass(slots=True)
 class TransferTotals:
-	"""Суммы и число трансферов; восстановление count потребовало бы обхода."""
+	"""Списанные и полученные сотые выбранной валюты и число трансферов."""
 
 	sent: int = 0
 	received: int = 0
@@ -109,7 +129,7 @@ class TransferTotals:
 
 @dataclass(slots=True)
 class StatisticsGroup:
-	"""Группа записей с агрегатами, вычисленными за один проход."""
+	"""Записи одной временной группы и рассчитанные за один проход итоги."""
 
 	entries: list[Entry]
 	totals: Totals = field(default_factory=Totals)
@@ -119,12 +139,15 @@ class StatisticsGroup:
 
 	@property
 	def count(self) -> int:
-		"""Число записей за O(1), без отдельного сохранённого счётчика."""
+		"""Получить число записей без отдельного счётчика.
+
+		Returns:
+		    Длина списка entries за O(1)."""
 		return len(self.entries)
 
 @dataclass(slots=True)
 class Statistics:
-	"""Независимые текущая/плановая группы и включительные даты периода."""
+	"""Текущая и плановая статистика с включительными границами периода."""
 
 	current: StatisticsGroup
 	planned: StatisticsGroup
@@ -138,11 +161,15 @@ class ValidationError(ValueError):
 # ====================
 
 def to_money(raw: str | int | float | Decimal, *, capital: bool = False) -> int:
-	"""Разобрать сумму в целые копейки/центы без округления.
-	
-	Допускаются запятая, точка и пробелы-разделители; максимум два знака.
-	Для капитала разрешены ноль и отрицательные значения, для операций –
-	только положительные. При неверном формате или размере – ValidationError."""
+	"""Разобрать денежную сумму без округления.
+
+	Args:
+	    raw: Число или строка; допустимы точка, запятая и пробелы-разделители.
+	    capital: Разрешить ноль и отрицательное значение начального капитала.
+	Returns:
+	    Целые копейки/центы; для операций строго больше нуля.
+	Raises:
+	    ValidationError: Неверный формат, знак, больше двух дробных знаков или лимита."""
 	value = str(raw).strip().replace(' ', '').replace('\u00a0', '').replace(',', '.')
 	pattern: str = r'-?\d+(?:\.\d{1,2})?' if capital else r'\d+(?:\.\d{1,2})?'
 	if not re.fullmatch(pattern, value):
@@ -159,7 +186,14 @@ def to_money(raw: str | int | float | Decimal, *, capital: bool = False) -> int:
 	return result
 
 def to_name(raw: str) -> str:
-	"""Обрезать крайние пробелы и проверить длину названия от 1 до 80 символов."""
+	"""Проверить название после удаления крайних пробелов.
+
+	Args:
+	    raw: Введённое пользователем название.
+	Returns:
+	    Название длиной от 1 до 80 символов.
+	Raises:
+	    ValidationError: Пустое или слишком длинное название."""
 	value = raw.strip()
 	if not 1 <= len(value) <= 80:
 		raise ValidationError('Название должно содержать от 1 до 80 символов')
@@ -167,9 +201,18 @@ def to_name(raw: str) -> str:
 	return value
 
 def fetch_owned(table: str, item_id: int | str | None, profile_id: int) -> sqlite3.Row:
-	"""Найти запись разрешённой таблицы внутри профиля или поднять NotFound.
-	
-	Имя таблицы проверяется по списку, значения передаются параметрами SQL."""
+	"""Найти объект разрешённой таблицы внутри заданного профиля.
+
+	Args:
+	    table: entries, categories или tags.
+	    item_id: Идентификатор объекта; None не находит строку.
+	    profile_id: Владелец объекта.
+	Returns:
+	    Строка SQLite со всеми столбцами объекта.
+	Raises:
+	    ValueError: Таблица не разрешена.
+	    NotFound: Объект отсутствует или принадлежит другому профилю.
+	    sqlite3.Error: Не удалось прочитать БД."""
 	if table not in ('entries', 'categories', 'tags'):
 		raise ValueError('Unsupported table')
 
@@ -182,19 +225,42 @@ def fetch_owned(table: str, item_id: int | str | None, profile_id: int) -> sqlit
 	return cast(sqlite3.Row, row)
 
 def _to_amounts(capitals: Mapping[str, str]) -> dict[str, int]:
-	"""Преобразовать начальный капитал каждой валюты в сотые; отсутствующий – ноль."""
+	"""Проверить начальный капитал всех поддерживаемых валют.
+
+	Args:
+	    capitals: Суммы по кодам валют; отсутствующая сумма равна нулю.
+	Returns:
+	    Суммы RUB/USD/EUR в целых сотых.
+	Raises:
+	    ValidationError: Одна из сумм недопустима."""
 	return { c: to_money(capitals.get(c, '0'), capital=True) for c in CURRENCIES }
 
 def effective_rate(amount: int, destination_amount: int) -> str:
-	"""Вычислить курс получения к модулю списания для показа с 8 значащими цифрами.
-	
-	Исходные суммы должны быть ненулевыми сотыми; результат не хранится в БД."""
+	"""Рассчитать курс получения к списанию с восемью значащими цифрами.
+
+	Args:
+	    amount: Ненулевая исходная сумма в сотых; используется модуль.
+	    destination_amount: Положительная полученная сумма в сотых.
+	Returns:
+	    Десятичная строка курса для отображения.
+	Raises:
+	    decimal.DivisionByZero: Исходная сумма равна нулю при ненулевом получении.
+	    decimal.InvalidOperation: Обе суммы равны нулю."""
 	with localcontext() as context:
 		context.prec = 32
 		return format(Decimal(destination_amount) / Decimal(abs(amount)), '.8g')
 
 def create_profile(raw_name: str, capitals: Mapping[str, str]) -> int:
-	"""Создать профиль и начальный капитал трёх валют одной транзакцией; вернуть ID."""
+	"""Создать профиль и начальный капитал одной транзакцией.
+
+	Args:
+	    raw_name: Название профиля до проверки.
+	    capitals: Начальные суммы по кодам валют; отсутствующие равны нулю.
+	Returns:
+	    Идентификатор созданного профиля.
+	Raises:
+	    ValidationError: Название или сумма недопустимы.
+	    sqlite3.Error: Не удалось сохранить профиль и капитал."""
 	title, amounts = to_name(raw_name), _to_amounts(capitals)
 
 	with db.get() as dbo:
@@ -202,7 +268,7 @@ def create_profile(raw_name: str, capitals: Mapping[str, str]) -> int:
 			'INSERT INTO profiles(name) VALUES (?)', (title,)
 		).lastrowid
 
-		assert profile_id is not None  # INSERT into an INTEGER PRIMARY KEY produces a row id.
+		assert profile_id is not None  # INTEGER PRIMARY KEY получает ID при INSERT.
 		dbo.executemany(
 			'INSERT INTO capitals VALUES (?, ?, ?)',
 			[(profile_id, c, amounts[c]) for c in CURRENCIES]
@@ -210,7 +276,15 @@ def create_profile(raw_name: str, capitals: Mapping[str, str]) -> int:
 	return profile_id
 
 def save_profile(profile_id: int, raw_name: str, capitals: Mapping[str, str]) -> None:
-	"""Атомарно изменить название и капитал профиля без создания операций журнала."""
+	"""Атомарно изменить название и начальный капитал без записи в журнале.
+
+	Args:
+	    profile_id: Идентификатор существующего профиля.
+	    raw_name: Новое название до проверки.
+	    capitals: Новые суммы по кодам валют; отсутствующие равны нулю.
+	Raises:
+	    ValidationError: Название или сумма недопустимы.
+	    sqlite3.Error: Не удалось сохранить изменения."""
 	title, amounts = to_name(raw_name), _to_amounts(capitals)
 
 	with db.get() as dbo:
@@ -225,12 +299,20 @@ def save_entry(
 	form: MultiDict[str, str],
 	entry_id: int | None = None,
 ) -> int:
-	"""Проверить форму и атомарно создать либо изменить запись; вернуть её ID.
-	
-	Форма передаёт положительный amount и UI-тип kind; в БД сохраняется знак.
-	Для трансфера обязательны другая валюта и destination_amount; курс игнорируется.
-	Будущие даты разрешены. Категория и теги проверяются на принадлежность профилю.
-	При редактировании связи тегов полностью заменяются; ошибки – ValidationError."""
+	"""Проверить и сохранить операцию вместе со связями тегов одной транзакцией.
+
+	Args:
+	    profile_id: Владелец операции, категории и тегов.
+	    form: Поля формы: kind, положительный amount, currency, occurred_at,
+	        comment; необязательные category_id и повторяющиеся tags.
+	        Трансфер требует destination_currency и destination_amount; курс игнорируется.
+	    entry_id: Редактируемая запись; None создаёт новую. Будущие даты разрешены.
+	Returns:
+	    Идентификатор сохранённой записи; при редактировании теги заменяются.
+	Raises:
+	    ValidationError: Недопустимые поля операции.
+	    NotFound: Запись, категория или тег отсутствует в профиле.
+	    sqlite3.Error: Не удалось сохранить операцию или её теги."""
 	if entry_id is not None:
 		fetch_owned('entries', entry_id, profile_id)
 
@@ -281,7 +363,7 @@ def save_entry(
 				'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
 				(*values, profile_id),
 			).lastrowid
-			assert entry_id is not None  # The INSERT always creates a row id.
+			assert entry_id is not None  # INSERT создал запись с INTEGER PRIMARY KEY.
 		else:
 			dbo.execute(
 				'UPDATE entries SET currency = ?, amount = ?, '
@@ -302,10 +384,14 @@ def save_entry(
 	return entry_id
 
 def delete_category(category_id: int, profile_id: int) -> None:
-	"""Удалить категорию профиля, предварительно установив её записям NULL.
-	
-	Обе операции выполняются одной транзакцией. Составной внешний ключ
-	не использует ON DELETE SET NULL, чтобы не обнулять обязательный profile_id."""
+	"""Удалить категорию, переведя её операции в «Без категории» атомарно.
+
+	Args:
+	    category_id: Идентификатор удаляемой категории.
+	    profile_id: Владелец категории и записей.
+	Raises:
+	    NotFound: Категория отсутствует в профиле.
+	    sqlite3.Error: Не удалось обновить записи или удалить категорию."""
 	fetch_owned('categories', category_id, profile_id)
 	with db.get() as dbo:
 		dbo.execute(
@@ -319,7 +405,15 @@ def delete_category(category_id: int, profile_id: int) -> None:
 		)
 
 def fetch_entries_for(profile_id: int) -> list[Entry]:
-	"""Загрузить журнал и теги двумя запросами независимо от числа записей."""
+	"""Загрузить журнал и теги двумя запросами независимо от числа записей.
+
+	Args:
+	    profile_id: Профиль журнала.
+	Returns:
+	    Записи от новых к старым; при равном времени — по убыванию ID.
+	Raises:
+	    sqlite3.Error: Не удалось прочитать журнал или теги.
+	    ValueError: В БД хранится некорректная дата."""
 	connection = db.get()
 	rows = connection.execute(
 		"SELECT e.id, e.currency, e.amount, e.occurred_at, e.comment, e.category_id, "
@@ -355,7 +449,17 @@ def fetch_entries_for(profile_id: int) -> list[Entry]:
 def fetch_balances(
 	profile_id: int, entries: Iterable[Entry], now: datetime | None = None,
 ) -> dict[str, int]:
-	"""Прибавить наступившие движения к капиталу; будущий трансфер исключается целиком."""
+	"""Прибавить наступившие движения к начальному капиталу профиля.
+
+	Args:
+	    profile_id: Профиль для загрузки начального капитала.
+	    entries: Записи этого же профиля; будущие трансферы исключаются целиком.
+	    now: Момент расчёта; None использует текущее локальное время сервера.
+	Returns:
+	    Баланс каждой валюты в целых сотых.
+	Raises:
+	    sqlite3.Error: Не удалось прочитать начальный капитал.
+	    TypeError: Время записей и now имеют несовместимые часовые смещения."""
 	current_time = now or datetime.now()
 	result: dict[str, int] = {
 		r['currency']: r['amount'] for r in db.get().execute(
@@ -375,7 +479,13 @@ def fetch_balances(
 	return result
 
 def _summarize(entries: list[Entry], currency: str) -> StatisticsGroup:
-	"""За один проход рассчитать группу; одна запись может войти в несколько тегов."""
+	"""Суммировать записи за один проход; итоги тегов могут пересекаться.
+
+	Args:
+	    entries: Уже отобранные записи одной группы и валюты.
+	    currency: Валюта расчёта; трансфер содержит её на одной из сторон.
+	Returns:
+	    Итоги операций, трансферов, категорий и тегов в целых сотых."""
 	result = StatisticsGroup(entries)
 	categories: dict[str, Breakdown] = {}
 	tags: dict[str, Breakdown] = {}
@@ -425,7 +535,20 @@ def calc_statistics(
 	end_selected: str | None = None,
 	now: datetime | None = None,
 ) -> Statistics:
-	"""Одним проходом отобрать валюту и включительный период, разделив группы по now."""
+	"""Отобрать период и валюту, разделив записи на текущие и плановые.
+
+	Args:
+	    entries: Исходный журнал.
+	    period: day, week, month, year или range.
+	    selected: Выбранная дата/месяц/год в формате period_bounds().
+	    currency: Валюта расчёта, учитываемая на обеих сторонах трансфера.
+	    end_selected: Включительная конечная дата для range.
+	    now: Граница текущих записей; None использует время сервера.
+	Returns:
+	    Итоги двух временных групп и включительные границы периода.
+	Raises:
+	    ValidationError: Неверный период или даты.
+	    TypeError: Время записей и now имеют несовместимые часовые смещения."""
 	start, end = period_bounds(period, selected, end_selected)
 	start_time = datetime.combine(start, time.min)
 	end_time = datetime.combine(end, time.max)
@@ -450,11 +573,17 @@ def calc_statistics(
 def period_bounds(
 	period: str, selected: str, end_selected: str | None = None
 ) -> tuple[date, date]:
-	"""Вернуть включительные даты периода или поднять ValidationError.
-	
-	selected: YYYY-MM-DD для дня, недели и диапазона, YYYY-MM для месяца,
-	YYYY для года. Неделя – последние 7 дней до selected включительно.
-	Для range дополнительно нужен end_selected в формате YYYY-MM-DD."""
+	"""Определить включительные календарные границы периода.
+
+	Args:
+	    period: day, week, month, year или range; week — последние семь дней.
+	    selected: YYYY-MM-DD для дня/недели/диапазона, YYYY-MM для месяца,
+	        YYYY для года. Для недели это последняя дата.
+	    end_selected: YYYY-MM-DD конца диапазона; нужен только для range.
+	Returns:
+	    Начальная и конечная даты, обе включены.
+	Raises:
+	    ValidationError: Неизвестный период, неверные даты или обратный диапазон."""
 
 	try:
 		if period in ('day', 'week', 'range'):

@@ -596,7 +596,7 @@ main {
 .stats-filter {
 	display: flex;
 	justify-content: space-between;
-	align-items: center;
+	align-items: end;
 	gap: 15px;
 	margin-bottom: 20px;
 	flex-wrap: wrap
@@ -1135,11 +1135,36 @@ textarea:hover {
 	gap: 23px
 }
 
-/* Две колонки полей; .amount-row даёт больше места сумме и выравнивается по низу. */
+/* Две колонки полей; ошибки растут вниз, не сдвигая соседний ввод. */
 .form-grid {
 	display: grid;
 	grid-template-columns: 1fr 1fr;
 	gap: 20px
+}
+
+/* Короткое действие у подписи даты; высота строки не зависит от кнопки. */
+.field-heading {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: 8px;
+}
+
+.datetime-field>input {
+	margin-top: 8px;
+}
+
+.now-button {
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--accent);
+	font-size: 11px;
+	line-height: inherit;
+}
+
+.now-button:hover {
+	text-decoration: underline;
 }
 
 .amount-row {
@@ -1553,6 +1578,27 @@ dialog p {
 	display: flex;
 	flex-direction: column;
 	gap: 16px
+}
+
+/* Приглашение: QR с белой тихой зоной и выделяемая текстовая ссылка. */
+.share-panel {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.invite-qr {
+	align-self: center;
+	width: 320px;
+	max-width: 100%;
+	height: auto;
+	background: white;
+	image-rendering: pixelated;
+}
+
+.invite-link {
+	font-size: 12px;
+	overflow-wrap: anywhere;
 }
 
 /* Широкие мониторы: размер меню и выравнивание шапки с ограниченной областью контента. */
@@ -2227,7 +2273,7 @@ dialog p {
 
 .transfer-preview {
 	display: block;
-	min-height: 38px;
+	margin-top: -10px;
 	overflow-wrap: anywhere;
 }
 
@@ -2390,7 +2436,25 @@ dialog p {
 }
 
 .amount-row {
-	align-items: end;
+	align-items: start;
+}
+
+/* Подписи обеих колонок делят одну высоту, в том числе при переносе текста. */
+.amount-row>label {
+	display: grid;
+	grid-template-rows: subgrid;
+	grid-row: span 3;
+	row-gap: 8px;
+}
+
+.amount-row>label>input,
+.amount-row>label>select,
+.amount-row .field-error {
+	margin-top: 0;
+}
+
+.amount-row .field-caption {
+	align-self: end;
 }
 
 /* Отдельная группа текущей или плановой статистики. */
