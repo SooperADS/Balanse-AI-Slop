@@ -1,4 +1,4 @@
-"""Домашняя бухгалтерия"""
+"""Приложение Flask: обработчики страниц, общий вход, CSRF и контекст шаблонов."""
 
 import sqlite3
 import secrets
@@ -34,12 +34,15 @@ from app.domain import (
 )
 from app.domain import effective_rate
 
+# Cookie постоянной серверной сессии; в БД хранится только хеш токена.
 COOKIE: str = 'budget_session'
+# Временный CSRF-токен формы входа, удаляемый после авторизации.
 LOGIN_COOKIE: str = 'budget_login_csrf'
 
-APP = Flask(__name__)
+# Общий экземпляр с маршрутами; init() задаёт конфигурацию и создаёт таблицы.
+APP: Flask = Flask(__name__)
 APP.config.update(
-	MAX_CONTENT_LENGTH=128 * 1024,
+	MAX_CONTENT_LENGTH=128 * 1024,  # Встроенный лимит Flask: 128 КиБ тела запроса.
 	DATABASE=str(Path('data/budget.sqlite3').resolve()),
 	MAX_LOGIN_ATTEMPTS=5,
 )
@@ -52,6 +55,7 @@ APP.add_template_filter(effective_rate, 'effective_rate')
 
 @APP.before_request
 def authenticate() -> Response | None:
+	"""Задать единый момент запроса, найти сессию и проверить CSRF для POST."""
 	g.now = datetime.now()
 	g.auth = None
 	g.profile = None
@@ -87,6 +91,7 @@ def authenticate() -> Response | None:
 
 def _set_session_cookie(response: Response, token: str) -> None:
 	# No server-side deadline. Browsers may enforce their own cookie retention limit.
+	"""Выдать HttpOnly-cookie без прикладного срока сессии; браузер может ограничить её хранение."""
 	response.set_cookie(
 		COOKIE, 
 		token,
@@ -98,6 +103,7 @@ def _set_session_cookie(response: Response, token: str) -> None:
 
 @APP.after_request
 def response_headers(response: Response) -> Response:
+	"""Добавить защитные заголовки, выдать CSRF-cookie входа и обновить cookie сессии."""
 	if request.endpoint != 'static':
 		response.headers['Cache-Control'] = 'no-store'
 	response.headers['X-Content-Type-Options'] = 'nosniff'
@@ -127,6 +133,7 @@ def response_headers(response: Response) -> Response:
 
 @APP.before_request
 def select_profile() -> Response | None:
+	"""Выбрать профиль сессии либо первый доступный; без профилей открыть создание."""
 	if request.endpoint in ('static', 'login', 'logout') or not g.get('auth'):
 		return None
 	db = dbm.get()
@@ -149,6 +156,7 @@ def select_profile() -> Response | None:
 
 @APP.context_processor
 def context() -> dict[str, Any]:
+	"""Предоставить шаблонам профили, валюты, время сервера и сообщения о результате."""
 	profiles = []
 	if g.get('auth'):
 		profiles = dbm.get().execute(
@@ -173,27 +181,32 @@ def context() -> dict[str, Any]:
 
 @APP.template_filter('money')
 def format_money(value: int) -> str:
+	"""Фильтр money: знаковые сотые в строку с запятой и разделителями тысяч."""
 	sign = '−' if value < 0 else ''
 	whole, cents = divmod(abs(value), 100)
 	return sign + f'{whole:,}'.replace(',', '\u00a0') + f',{cents:02d}'
 
 @APP.template_filter('amount_input')
 def amount_input(value: int) -> str:
+	"""Фильтр amount_input: знаковые сотые в десятичную строку для поля формы."""
 	whole, cents = divmod(abs(value), 100)
 	return ('-' if value < 0 else '') + f'{whole}.{cents:02d}'
 
 @APP.template_filter('localdate')
 def localdate(value: str) -> str:
+	"""Фильтр localdate: локальные дата и время ISO в формат ДД.ММ.ГГГГ · ЧЧ:ММ."""
 	return datetime.fromisoformat(value).strftime('%d.%m.%Y · %H:%M')
 
 @APP.template_filter('calendar_date')
 def calendar_date(value: str) -> str:
+	"""Фильтр calendar_date: дата ISO в формат ДД.ММ.ГГГГ."""
 	return datetime.fromisoformat(value).strftime('%d.%m.%Y')
 
 @APP.errorhandler(400)
 @APP.errorhandler(404)
 @APP.errorhandler(413)
 def client_error(error: HTTPException) -> tuple[str, int]:
+	"""Показать общую страницу ошибок 400, 404 и превышения размера запроса 413."""
 	assert error.code is not None
 	messages = {
 		404: 'Страница или запись не найдена',
@@ -212,6 +225,7 @@ def client_error(error: HTTPException) -> tuple[str, int]:
 
 @APP.route('/login', methods=['GET', 'POST'])
 def login() -> ResponseReturnValue:
+	"""Показать вход или проверить пароль с ограничением попыток; создать сессию."""
 	if g.auth:
 		return redirect(url_for('overview'))
 
@@ -266,6 +280,7 @@ def login() -> ResponseReturnValue:
 
 @APP.post('/logout')
 def logout() -> Response:
+	"""Отозвать только текущую сессию в БД и удалить её cookie из браузера."""
 	with dbm.get() as db:
 		db.execute('DELETE FROM auth_sessions WHERE token_hash = ?', (g.auth['token_hash'],))
 
@@ -275,6 +290,7 @@ def logout() -> Response:
 
 @APP.get('/')
 def overview() -> str:
+	"""Показать текущие балансы и две группы статистики за выбранный период."""
 	entries = fetch_entries_for(g.profile['id'], g.now)
 	period = request.args.get('period', 'month')
 	currency = request.args.get('currency', 'RUB')
@@ -304,6 +320,7 @@ def overview() -> str:
 	)
 
 def _fetch_catalog(table: Literal['categories', 'tags']) -> list[sqlite3.Row]:
+	"""Получить категории или теги текущего профиля в порядке названий."""
 	return dbm.get().execute(
 		f'SELECT * FROM {table} WHERE profile_id = ? ORDER BY name COLLATE NOCASE',
 		(g.profile['id'],)
@@ -311,6 +328,10 @@ def _fetch_catalog(table: Literal['categories', 'tags']) -> list[sqlite3.Row]:
 
 @APP.get('/entries')
 def entry_list() -> str:
+	"""Отфильтровать журнал и показать текущие и будущие записи отдельными группами.
+	
+	Все переданные tag должны присутствовать; category_id=none означает NULL.
+	Фильтр валюты учитывает обе стороны трансфера; даты включительны."""
 	entries = fetch_entries_for(g.profile['id'], g.now)
 	args = request.args
 
@@ -321,9 +342,13 @@ def entry_list() -> str:
 	if args.get('category_id') == 'none':
 		entries = [e for e in entries if e['category_id'] is None]
 	elif args.get('category_id'):
-		entries = [e for e in entries if str(e['category_id']) == args['category_id']]
+		entries = [
+			e for e in entries if str(e['category_id']) == args['category_id']
+		]
 	if args.get('currency'):
-		entries = [e for e in entries if args['currency'] in (e['currency'], e['destination_currency'])]
+		entries = [
+			e for e in entries if args['currency'] in (e['currency'], e['destination_currency'])
+		]
 	selected_tags = {tag for tag in args.getlist('tag') if tag}
 	q = args.get('q')
 	if selected_tags:
@@ -360,6 +385,9 @@ def entry_list() -> str:
 @APP.route('/entries/new', methods=['GET', 'POST'])
 @APP.route('/entries/<int:entry_id>/edit', methods=['GET', 'POST'])
 def entry_form(entry_id: int | None = None) -> ResponseReturnValue:
+	"""Показать форму новой/существующей записи или сохранить её после проверки.
+	
+	При ошибке сохранить введённые значения и вернуть статус 422."""
 	entry, selected_tags = None, []
 	if entry_id is not None:
 		entry = dict(
@@ -399,6 +427,7 @@ def entry_form(entry_id: int | None = None) -> ResponseReturnValue:
 
 @APP.post('/entries/<int:entry_id>/delete')
 def delete_entry(entry_id: int) -> Response:
+	"""Необратимо удалить запись текущего профиля вместе со связями тегов."""
 	fetch_owned('entries', entry_id, g.profile['id'])
 	with dbm.get() as db:
 		db.execute(
@@ -409,6 +438,7 @@ def delete_entry(entry_id: int) -> Response:
 
 @APP.route('/profiles/new', methods=['GET', 'POST'])
 def new_profile() -> ResponseReturnValue:
+	"""Показать создание профиля; после сохранения выбрать его в текущей сессии."""
 	status = 200
 	if request.method == 'POST':
 		try:
@@ -434,6 +464,7 @@ def new_profile() -> ResponseReturnValue:
 
 @APP.post('/profiles/switch')
 def switch_profile() -> Response:
+	"""Выбрать существующий профиль для текущей сессии без отдельного пароля."""
 	profile = dbm.get().execute(
 		'SELECT * FROM profiles WHERE id = ?', (request.form.get('profile_id'),)
 	).fetchone()
@@ -450,6 +481,7 @@ def switch_profile() -> Response:
 
 @APP.route('/settings', methods=['GET', 'POST'])
 def settings() -> ResponseReturnValue:
+	"""Показать или изменить название и начальный капитал текущего профиля."""
 	values: Mapping[str, str] = {
 		'name': g.profile['name'],
 		**{r['currency']: amount_input(r['amount']) for r in dbm.get().execute(
@@ -479,6 +511,7 @@ def settings() -> ResponseReturnValue:
 
 @APP.post('/profiles/delete')
 def delete_profile() -> Response:
+	"""Необратимо удалить профиль с журналом и справочниками; выбрать другой при следующем запросе."""
 	with dbm.get() as db:
 		# Delete entries before their required categories, regardless of FK cascade order.
 		db.execute('DELETE FROM entries WHERE profile_id=?', (g.profile['id'],))
@@ -487,6 +520,7 @@ def delete_profile() -> Response:
 
 @APP.get('/library')
 def library() -> str:
+	"""Показать категории и теги текущего профиля; категория по умолчанию виртуальная."""
 	return render_template(
 		'library.html',
 		active='library',
@@ -496,6 +530,9 @@ def library() -> str:
 
 @APP.post('/library/<kind>/<action>')
 def change_library(kind: str, action: str) -> ResponseReturnValue:
+	"""Добавить, переименовать или удалить элемент справочника текущего профиля.
+	
+	Имя «Без категории» зарезервировано; удаление категории сохраняет её записи."""
 	if kind not in ('categories', 'tags') or action not in ('add', 'rename', 'delete'):
 		abort(404)
 
@@ -550,6 +587,10 @@ def change_library(kind: str, action: str) -> ResponseReturnValue:
 # ====================
 
 def init(config_obj: Mapping[str, object]) -> Flask:
+	"""Настроить модульный экземпляр Flask и создать отсутствующие таблицы SQLite.
+	
+	Удалить сессии с другим отпечатком пароля. Существующие данные не сбрасываются,
+	автоматической миграции изменившихся таблиц нет. Допустим повторный вызов в тестах."""
 	APP.config.update(config_obj)
 
 	app_config = cast(config.AppConfig, APP.config)

@@ -1,3 +1,5 @@
+"""Проверки конфигурации и запуска настоящего HTTP-сервера в дочернем процессе."""
+
 import http.client
 import socket
 import subprocess
@@ -16,10 +18,13 @@ from app import config
 import main
 
 def load_config() -> tuple[config.AppConfig, str, int]:
+	"""Загрузить настройки относительно подменяемого в тесте main.ROOT."""
 	return config.load(main.ROOT)
 
 class RuntimeTest(unittest.TestCase):
+	"""Проверки файлов конфигурации и настоящего HTTP-ответа Waitress."""
 	def setUp(self) -> None:
+		"""Подготовить временную папку с примером конфигурации."""
 		self.temp = tempfile.TemporaryDirectory()
 		self.root = Path(self.temp.name)
 		(self.root / 'config.example.toml').write_text(
@@ -27,14 +32,17 @@ class RuntimeTest(unittest.TestCase):
 		)
 
 	def tearDown(self) -> None:
+		"""Удалить временную папку теста."""
 		self.temp.cleanup()
 
 	def config(self, text: str) -> tuple[config.AppConfig, str, int]:
+		"""Записать TOML и прочитать его с временным корнем приложения."""
 		(self.root / 'config.toml').write_text(text)
 		with patch.object(main, 'ROOT', self.root):
 			return load_config()
 
 	def test_first_start_and_config_validation(self) -> None:
+		"""Проверить создание конфигурации, пустой пароль, хеши и недопустимые значения."""
 		with patch.object(main, 'ROOT', self.root):
 			with self.assertRaisesRegex(ValueError, 'Создан config.toml'):
 				load_config()
@@ -69,6 +77,7 @@ class RuntimeTest(unittest.TestCase):
 			self.config('not toml')
 
 	def test_waitress_http_smoke(self) -> None:
+		"""Запустить сервер в дочернем процессе, проверить вход и гарантированно остановить его."""
 		with socket.socket() as probe:
 			try:
 				probe.bind(('127.0.0.1', 0))

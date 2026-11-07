@@ -1,4 +1,4 @@
-"""Запуск: python app.py (после установки requirements.txt)."""
+"""Запуск HTTP-сервера Waitress: python main.py после установки requirements.txt."""
 
 import sys
 import tomllib
@@ -9,9 +9,11 @@ from waitress import serve
 from app import init
 from app import config
 
+# Корень для config.toml, примера настроек и относительного пути базы.
 ROOT: Path = Path(__file__).resolve().parent
 
 def main() -> int:
+	"""Загрузить настройки и запустить сервер; вернуть 1 при ошибке конфигурации."""
 	try:
 		cfg_obj, host, port = config.load(ROOT)
 		app = init(cfg_obj)

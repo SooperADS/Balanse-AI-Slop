@@ -1,27 +1,41 @@
 @charset "UTF-8";
 
+/* Палитра и размеры: общие CSS-переменные для тёмной темы; голубые токены ниже относятся к плановым данным. */
 :root {
 	color-scheme: dark;
 	--bg: #111513;
+	/* фон страницы */
 	--panel: #1a201c;
+	/* фон карточек и панелей */
 	--panel-2: #202722;
+	/* фон вторичных элементов */
 	--line: #303931;
+	/* границы и разделители */
 	--text: #edf0e9;
+	/* основной текст */
 	--muted: #99a598;
-	--accent: #c5e783;
-	--green: #9ed5b0;
+	/* вторичные подписи */
+	--accent: #d5ea6d;
+	/* зелёный акцент основных действий */
+	--green: #9ce8bd;
+	/* цвет доходов */
 	--red: #e9a08e;
+	/* расходы, удаление и ошибки */
 	--sidebar: 236px;
+	/* ширина меню ПК, обнуляется на телефоне */
 	--radius: 16px;
+	/* типовое скругление панелей */
 	font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 	font-size: 14px;
 	line-height: 1.5
 }
 
+/* Базовая модель размеров: padding и border входят в заданную ширину. */
 * {
 	box-sizing: border-box
 }
 
+/* Фон страницы и базовый цвет текста; типографика наследуется от :root. */
 body {
 	margin: 0;
 	background: var(--bg);
@@ -33,6 +47,7 @@ a {
 	text-decoration: none
 }
 
+/* Общие интерактивные элементы: наследование шрифта, курсор и доступный фокус. */
 button,
 input,
 select,
@@ -65,6 +80,7 @@ textarea:focus-visible {
 	outline-offset: 4px
 }
 
+/* Заголовки и текст: сброс отступов, затем уровни заголовков и вспомогательные подписи. */
 h1,
 h2,
 h3,
@@ -99,10 +115,12 @@ svg {
 	vertical-align: middle
 }
 
+/* Встроенные SVG-иконки: одинаковое выравнивание и размер независимо от компонента. */
 .icon {
 	display: inline-block
 }
 
+/* Текстовые модификаторы: .muted — пояснение, .accent — основной акцент, .eyebrow — надзаголовок. */
 .muted {
 	color: var(--muted);
 	font-size: 13px
@@ -121,6 +139,7 @@ svg {
 	margin-bottom: 12px
 }
 
+/* Визуально скрытые подписи остаются доступны средствам чтения с экрана. */
 .sr-only {
 	position: absolute;
 	width: 1px;
@@ -130,6 +149,7 @@ svg {
 	white-space: nowrap
 }
 
+/* Боковая навигация ПК; на телефоне тот же блок становится нижней панелью. */
 .sidebar {
 	position: fixed;
 	inset: 0 auto 0 0;
@@ -142,6 +162,7 @@ svg {
 	z-index: 10
 }
 
+/* Название и знак приложения; .brand-mark оформляет квадратную эмблему. */
 .brand {
 	display: flex;
 	align-items: center;
@@ -181,6 +202,7 @@ svg {
 	margin-top: 1px
 }
 
+/* Навигация: подпись раздела, ссылки .nav-item и активное состояние .active. */
 .nav-label {
 	font-size: 9px;
 	letter-spacing: 1.7px;
@@ -218,6 +240,7 @@ svg {
 	border-radius: 50%
 }
 
+/* Нижняя часть меню ПК: статус бюджета и выход из текущей сессии. */
 .sidebar-bottom {
 	margin-top: auto
 }
@@ -262,6 +285,7 @@ svg {
 	background: var(--panel)
 }
 
+/* Рабочая область справа от меню; main растягивается между шапкой и подвалом. */
 .workspace {
 	margin-left: var(--sidebar);
 	min-height: 100vh;
@@ -269,6 +293,7 @@ svg {
 	flex-direction: column
 }
 
+/* Верхняя панель: путь раздела и управление профилями. */
 .topbar {
 	height: 84px;
 	flex-shrink: 0;
@@ -295,6 +320,7 @@ svg {
 	color: #d5ddcf
 }
 
+/* Переключатель профилей: аватар, форма выбора и кнопка создания. */
 .profile-control {
 	display: flex;
 	align-items: center;
@@ -336,6 +362,7 @@ svg {
 	background: var(--panel)
 }
 
+/* Контейнер содержимого с максимальной шириной и отступами от меню. */
 main {
 	padding: 38px 40px 30px;
 	width: 100%;
@@ -345,6 +372,7 @@ main {
 	min-width: 0
 }
 
+/* Заголовок страницы, пояснение и основное действие; на узком экране допускается перенос. */
 .page-heading {
 	display: flex;
 	align-items: center;
@@ -361,6 +389,7 @@ main {
 	margin-bottom: 10px
 }
 
+/* Кнопки-ссылки и кнопки форм: общий размер, выравнивание и состояния. */
 .button {
 	border: 1px solid transparent;
 	min-height: 43px;
@@ -380,6 +409,7 @@ main {
 	transform: translateY(-1px)
 }
 
+/* Варианты кнопок: .primary — основное действие, .secondary — вторичное, .danger — удаление. */
 .primary {
 	background: var(--accent);
 	color: #1c2718;
@@ -414,6 +444,7 @@ main {
 	color: var(--red) !important
 }
 
+/* Компактная кнопка выбора профиля без JavaScript. */
 .small-button {
 	color: var(--text);
 	border: 1px solid var(--line);
@@ -423,6 +454,7 @@ main {
 	font-size: 11px
 }
 
+/* Текстовое действие с необязательной иконкой; отличается от полноразмерной кнопки. */
 .text-link {
 	display: inline-flex;
 	align-items: center;
@@ -441,6 +473,7 @@ main {
 	height: 16px
 }
 
+/* Кнопка только с иконкой; доступное имя задаётся в HTML через aria-label. */
 .icon-button {
 	border: 0;
 	background: transparent;
@@ -464,6 +497,7 @@ main {
 	color: var(--text)
 }
 
+/* Карточки текущего баланса трёх валют; .featured выделяет рублёвую карточку. */
 .balance-grid {
 	display: grid;
 	grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -471,6 +505,7 @@ main {
 	margin-bottom: 35px
 }
 
+/* Содержимое карточки баланса: подпись, код валюты, сумма и название валюты. */
 .balance-card {
 	background: linear-gradient(120deg, #232c23, #1b231d);
 	border: 1px solid #344032;
@@ -541,6 +576,7 @@ main {
 	color: #4c603b
 }
 
+/* Отступы разделов и их заголовков. */
 .section {
 	margin-bottom: 24px
 }
@@ -556,6 +592,7 @@ main {
 	margin-top: 4px
 }
 
+/* Фильтр статистики: переключатели периода, даты, валюта и отправка формы. */
 .stats-filter {
 	display: flex;
 	justify-content: space-between;
@@ -565,6 +602,7 @@ main {
 	flex-wrap: wrap
 }
 
+/* Переключатели на radio: скрывается сам input, фокус и выбор отображаются на span. */
 .period-tabs {
 	display: flex;
 	background: #1c231c;
@@ -624,6 +662,7 @@ main {
 	min-height: 39px
 }
 
+/* Три показателя выбранной группы статистики: доход, расход и разница. */
 .summary-grid {
 	display: grid;
 	grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -648,6 +687,7 @@ main {
 	margin-bottom: 16px
 }
 
+/* Знак операции с фоном по типу; .neutral используется для сводных показателей. */
 .transaction-icon {
 	display: inline-flex;
 	align-items: center;
@@ -700,6 +740,7 @@ main {
 	font-size: 10px
 }
 
+/* Семантические цвета сумм: доход — зелёный, расход — тёплый красный. */
 .income {
 	color: var(--green)
 }
@@ -708,6 +749,7 @@ main {
 	color: var(--red)
 }
 
+/* Общая панель с границей и скруглением; внутренние отступы задаёт компонент. */
 .panel {
 	border: 1px solid var(--line);
 	border-radius: var(--radius);
@@ -716,12 +758,14 @@ main {
 	overflow: hidden
 }
 
+/* Две колонки разбивок по категориям и тегам; на телефоне — одна. */
 .analysis-grid {
 	display: grid;
 	grid-template-columns: 1fr 1fr;
 	gap: 20px
 }
 
+/* Шапка панели с заголовком, счётчиком либо ссылкой действия. */
 .panel-heading {
 	display: flex;
 	justify-content: space-between;
@@ -735,6 +779,7 @@ main {
 	margin-top: 5px
 }
 
+/* Небольшой счётчик записей или элементов справочника. */
 .count-badge {
 	display: inline-block;
 	min-width: 25px;
@@ -748,6 +793,7 @@ main {
 	padding: 0 6px
 }
 
+/* Разбивка статистики: название, доходы, расходы и полоска относительного объёма. */
 .breakdown-head,
 .breakdown-row {
 	display: grid;
@@ -822,11 +868,13 @@ main {
 	line-height: 1.6
 }
 
+/* Контейнер горизонтального прокручивания таблицы на ПК. */
 .table-wrap {
 	width: 100%;
 	overflow-x: auto
 }
 
+/* Таблица журнала; td остаются ячейками, чтобы разделители совпадали по всей строке. */
 .entries-table {
 	border-collapse: collapse;
 	width: 100%;
@@ -859,10 +907,12 @@ main {
 	background: #c5e78304
 }
 
+/* Ячейка названия операции; flex вынесен во внутренний .entry-title-content. */
 .entry-title {
 	min-width: 180px
 }
 
+/* Иконка и текст внутри ячейки; не меняет табличную модель самого td. */
 .entry-title-content {
 	display: flex;
 	align-items: center;
@@ -886,6 +936,7 @@ main {
 	color: #8b9985
 }
 
+/* Категория и набор меток: .tag-list переносит теги, .tag оформляет одну метку. */
 .category-label {
 	color: #d1dacb;
 	font-size: 11px
@@ -909,6 +960,7 @@ main {
 	overflow-wrap: anywhere
 }
 
+/* Дата операции с приглушённым цветом; .entry-amount выравнивает суммы по правому краю. */
 .entry-date {
 	color: #8b9985;
 	font-size: 10px !important;
@@ -927,6 +979,7 @@ main {
 	opacity: .8
 }
 
+/* Действия над одной записью: редактирование и форма удаления. */
 .entry-actions {
 	white-space: nowrap;
 	text-align: right;
@@ -946,6 +999,7 @@ main {
 	text-align: right
 }
 
+/* Состояние без данных; .compact уменьшает высоту для небольших панелей. */
 .empty {
 	text-align: center;
 	display: flex;
@@ -984,6 +1038,7 @@ main {
 	font-size: 11px
 }
 
+/* Подвал рабочей области; мобильный нижний отступ учитывает фиксированное меню. */
 .footer {
 	display: flex;
 	justify-content: space-between;
@@ -998,6 +1053,7 @@ main {
 	margin: 0 8px
 }
 
+/* Сетка фильтров журнала; .search-field занимает две колонки. */
 .filters {
 	padding: 21px;
 	display: grid;
@@ -1010,6 +1066,7 @@ main {
 	font-size: 10px
 }
 
+/* Одинаковая высота и общий нижний край кнопок применения и сброса фильтра. */
 .filter-buttons {
 	display: flex;
 	align-items: center;
@@ -1022,6 +1079,7 @@ main {
 	grid-column: span 2
 }
 
+/* Поля форм: подписи, ввод, select и textarea с общими границами и размерами. */
 label {
 	display: block;
 	color: #c3cebc;
@@ -1064,17 +1122,20 @@ textarea:hover {
 	border-color: #59694f
 }
 
+/* Панель формы с ограниченной шириной для удобного чтения и ввода. */
 .form-panel {
 	padding: 28px;
 	max-width: 800px
 }
 
+/* Вертикальная компоновка полей формы с единым промежутком. */
 .stack {
 	display: flex;
 	flex-direction: column;
 	gap: 23px
 }
 
+/* Две колонки полей; .amount-row даёт больше места сумме и выравнивается по низу. */
 .form-grid {
 	display: grid;
 	grid-template-columns: 1fr 1fr;
@@ -1098,6 +1159,7 @@ textarea:hover {
 	color: var(--accent)
 }
 
+/* Группировка полей без стандартной рамки браузера; легенда остаётся подписью группы. */
 fieldset {
 	margin: 0;
 	padding: 0;
@@ -1111,6 +1173,7 @@ legend {
 	margin-bottom: 12px
 }
 
+/* Выбор UI-типа записи: расход, доход или трансфер; выбор виден по рамке. */
 .kind-selector {
 	display: flex;
 	gap: 12px
@@ -1152,6 +1215,7 @@ legend {
 	outline-offset: 3px
 }
 
+/* Теги как переключаемые checkbox-метки; состояние задаётся соседним input:checked. */
 .tag-choices {
 	display: flex;
 	flex-wrap: wrap;
@@ -1193,6 +1257,7 @@ legend {
 	outline-offset: 3px
 }
 
+/* Ряд кнопок сохранения и отмены с переносом при нехватке места. */
 .form-actions {
 	display: flex;
 	gap: 10px;
@@ -1205,6 +1270,7 @@ legend {
 	background: var(--line)
 }
 
+/* Поля начального капитала по валютам; на телефоне складываются вертикально. */
 .capital-grid {
 	display: grid;
 	grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1216,12 +1282,14 @@ legend {
 	line-height: 1.8
 }
 
+/* Пояснение к полю или расчёту, не являющееся сообщением об ошибке. */
 .helper {
 	font-size: 11px;
 	color: #8b9983;
 	line-height: 1.8
 }
 
+/* Блок необратимого удаления профиля с отдельным визуальным акцентом. */
 .danger-panel {
 	border-color: #624036;
 	margin-top: 25px;
@@ -1238,6 +1306,7 @@ legend {
 	margin-top: 9px
 }
 
+/* Панели категорий и тегов; внутренние формы добавляют и переименовывают элементы. */
 .library-grid {
 	display: grid;
 	grid-template-columns: 1fr 1fr;
@@ -1267,6 +1336,7 @@ legend {
 	padding: 0 23px
 }
 
+/* Одна строка справочника; .default-category — виртуальное отсутствие категории. */
 .library-item {
 	padding: 15px 0;
 	display: flex;
@@ -1279,6 +1349,7 @@ legend {
 	border: 0
 }
 
+/* Строка переименования справочника; дополнительные правила ниже допускают перенос ошибки. */
 .library-rename {
 	display: flex;
 	flex: 1;
@@ -1323,6 +1394,7 @@ legend {
 	height: 12px
 }
 
+/* Сообщения результата запроса: .notice — успех, .error-notice — серверная ошибка ввода. */
 .notice,
 .error-notice {
 	padding: 13px 17px;
@@ -1344,6 +1416,7 @@ legend {
 	color: #edb5a5
 }
 
+/* Страница общего входа без боковой навигации. */
 .auth-body {
 	min-height: 100vh;
 	background: radial-gradient(ellipse at 50% 20%, #29372166 0, transparent 65%), var(--bg)
@@ -1367,6 +1440,7 @@ legend {
 	margin-bottom: 40px
 }
 
+/* Карточка входа: пароль, основное действие и поясняющая подпись. */
 .login-card {
 	background: var(--panel);
 	border: 1px solid var(--line);
@@ -1400,6 +1474,7 @@ legend {
 	margin-top: 28px
 }
 
+/* Модификатор растягивания элемента на доступную ширину. */
 .full {
 	width: 100%
 }
@@ -1420,6 +1495,7 @@ legend {
 	height: 15px
 }
 
+/* Модальное подтверждение удаления; затемнение находится в ::backdrop. */
 dialog {
 	border: 1px solid #4e6041;
 	border-radius: 16px;
@@ -1448,6 +1524,7 @@ dialog p {
 	overflow-wrap: anywhere
 }
 
+/* Общая страница ошибки HTTP с действием возврата в приложение. */
 .error-page {
 	text-align: center;
 	padding: 45px 25px;
@@ -1465,10 +1542,12 @@ dialog p {
 	color: var(--muted)
 }
 
+/* Состояние hidden должно скрывать элемент даже при display:flex/grid у компонента. */
 [hidden] {
 	display: none !important
 }
 
+/* Выход из текущего браузера на странице настроек. */
 .access-panel {
 	margin-top: 25px;
 	display: flex;
@@ -1476,6 +1555,7 @@ dialog p {
 	gap: 16px
 }
 
+/* Широкие мониторы: размер меню и выравнивание шапки с ограниченной областью контента. */
 @media(min-width:1650px) {
 	:root {
 		--sidebar: 260px
@@ -1483,10 +1563,12 @@ dialog p {
 
 	.topbar {
 		padding-right: max(40px, calc((100vw - var(--sidebar) - 1440px)/2));
+		/* ширина меню ПК, обнуляется на телефоне */
 		padding-left: max(40px, calc((100vw - var(--sidebar) - 1440px)/2))
 	}
 }
 
+/* Компактный ПК: уменьшаются меню, отступы и карточки. */
 @media(max-width:1200px) {
 	:root {
 		--sidebar: 205px
@@ -1506,6 +1588,7 @@ dialog p {
 
 	.nav-item {
 		gap: 10px;
+		/* ширина меню ПК, обнуляется на телефоне */
 		font-size: 12px
 	}
 
@@ -1557,6 +1640,7 @@ dialog p {
 	}
 }
 
+/* Планшетная ширина: некоторые двухколоночные панели становятся одноколоночными. */
 @media(max-width:1000px) and (min-width:761px) {
 	.topbar-caption {
 		font-size: 0
@@ -1612,6 +1696,7 @@ dialog p {
 	}
 }
 
+/* Телефон: нижняя навигация и карточная компоновка строк журнала вместо таблицы. */
 @media(max-width:760px) {
 	:root {
 		--sidebar: 0px
@@ -1619,6 +1704,7 @@ dialog p {
 
 	.sidebar {
 		inset: auto 0 0;
+		/* ширина меню ПК, обнуляется на телефоне */
 		width: 100%;
 		height: 73px;
 		padding: 0 10px 6px;
@@ -2055,6 +2141,7 @@ dialog p {
 	}
 }
 
+/* Очень узкий экран: показатели статистики складываются в одну колонку. */
 @media(max-width:370px) {
 	main {
 		padding-left: 13px;
@@ -2102,6 +2189,7 @@ dialog p {
 	}
 }
 
+/* Уважение системной настройки уменьшенного движения: отключение анимационных переходов. */
 @media(prefers-reduced-motion:reduce) {
 
 	*,
@@ -2111,64 +2199,297 @@ dialog p {
 		scroll-behavior: auto !important
 	}
 }
+
 /* Transfers, custom periods and multiple-tag filters. */
-.transaction-icon.transfer { background: #c5e78314; color: var(--accent); }
-.transfer-fields { padding: 20px; border: 1px solid var(--line); border-radius: 12px; display: flex; flex-direction: column; gap: 18px; }
-.transfer-fields legend { padding: 0 6px; margin-bottom: 0; }
-.transfer-mode { width: fit-content; }
-.transfer-preview { display: block; min-height: 38px; overflow-wrap: anywhere; }
-.transfer-leg { display: block; }
-.transfer-leg + .transfer-leg { margin-top: 4px; }
-.transfer-rate { display: block; color: var(--muted); font-size: 9px; margin-top: 6px; }
-.filter-tags { grid-column: 1 / -1; grid-row: auto; }
-.stats-filter .period-tabs { max-width: 100%; flex-wrap: wrap; }
-.stats-filter .period-tabs label { flex: 1; }
-.stats-filter .period-tabs span { text-align: center; padding-left: 12px; padding-right: 12px; }
-.stats-filter-fields { align-items: end; flex-wrap: wrap; }
-.stats-filter-fields label > span { font-size: 10px; }
-.stats-filter-fields label > input { margin-top: 6px; }
-.statistics-dates { margin: -5px 0 18px; font-size: 11px; }
-.transfer-summary { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 22px; margin-bottom: 22px; }
-.transfer-summary > div { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin-right: auto; }
-.transfer-summary .transaction-icon { grid-row: span 2; }
-.transfer-summary strong { font-size: 12px; font-weight: 500; }
-.transfer-summary small { font-size: 10px; color: var(--muted); }
-.transfer-summary p { font-size: 11px; color: var(--muted); }
-.transfer-summary p strong { display: block; margin-top: 5px; font-variant-numeric: tabular-nums; }
-@media (max-width: 760px) {
-	.stats-filter .period-tabs { width: 100%; }
-	.stats-filter .period-tabs span { padding: 7px 8px; font-size: 11px; }
-	.stats-filter-fields label { flex: 1; min-width: 135px; }
-	.stats-filter-fields label input { width: 100%; }
-	.transfer-fields { padding: 15px; }
-	.transfer-summary { gap: 16px; padding: 17px; }
-	.transfer-summary > div { width: 100%; }
-	.transfer-summary p { flex: 1; }
-	.entry-amount.transfer { white-space: normal; overflow-wrap: anywhere; }
-	.kind-selector { gap: 7px; }
-	.kind-selector span { padding: 12px 8px; font-size: 11px; }
+/* Дополнения трансферов: две валютные суммы, вычисленный курс и связанные поля. */
+.transaction-icon.transfer {
+	background: #c5e78314;
+	color: var(--accent);
 }
 
-:root { --blue: #8dc8ed; --blue-line: #425f74; }
-.amount-row { align-items: end; }
-.statistics-group { margin-top: 28px; }
-.statistics-group > .recent-panel { margin-top: 20px; }
-.statistics-group.planned-section { padding: 22px; border: 1px solid var(--blue-line); border-radius: var(--radius); background: #8dc8ed06; }
-.planned-section > .section-heading h2, .planned-section > .panel-heading h2 { color: var(--blue); }
-.planned-section .count-badge { color: var(--blue); border-color: var(--blue-line); background: #8dc8ed0f; }
-.entry-group { margin-bottom: 25px; }
-.entry-group.planned-section { border-color: var(--blue-line); }
-.planned-row { background: #8dc8ed05; }
-.planned-badge { color: var(--blue); white-space: nowrap; }
-.planned-note { color: var(--blue); background: #8dc8ed0b; border: 1px solid var(--blue-line); border-radius: 8px; padding: 12px 15px; font-size: 12px; }
-.field-invalid { border-color: var(--red) !important; box-shadow: 0 0 0 1px #e9a08e40; }
-.field-error { display: block; color: var(--red); font-size: 11px; line-height: 1.5; margin-top: 6px; }
-.library-rename { flex-wrap: wrap; }
-.library-rename input { flex: 1; width: 0; }
-.library-rename .field-error { flex-basis: 100%; order: 2; }
+.transfer-fields {
+	padding: 20px;
+	border: 1px solid var(--line);
+	border-radius: 12px;
+	display: flex;
+	flex-direction: column;
+	gap: 18px;
+}
+
+.transfer-fields legend {
+	padding: 0 6px;
+	margin-bottom: 0;
+}
+
+.transfer-mode {
+	width: fit-content;
+}
+
+.transfer-preview {
+	display: block;
+	min-height: 38px;
+	overflow-wrap: anywhere;
+}
+
+.transfer-leg {
+	display: block;
+}
+
+.transfer-leg+.transfer-leg {
+	margin-top: 4px;
+}
+
+.transfer-rate {
+	display: block;
+	color: var(--muted);
+	font-size: 9px;
+	margin-top: 6px;
+}
+
+/* Поле выбора нескольких тегов занимает всю строку сетки фильтров. */
+.filter-tags {
+	grid-column: 1 / -1;
+	grid-row: auto;
+}
+
+.stats-filter .period-tabs {
+	max-width: 100%;
+	flex-wrap: wrap;
+}
+
+.stats-filter .period-tabs label {
+	flex: 1;
+}
+
+.stats-filter .period-tabs span {
+	text-align: center;
+	padding-left: 12px;
+	padding-right: 12px;
+}
+
+.stats-filter-fields {
+	align-items: end;
+	flex-wrap: wrap;
+}
+
+.stats-filter-fields label>span {
+	font-size: 10px;
+}
+
+.stats-filter-fields label>input {
+	margin-top: 6px;
+}
+
+.statistics-dates {
+	margin: -5px 0 18px;
+	font-size: 11px;
+}
+
+/* Сводка списанного и полученного по трансферам; не входит в доходы и расходы. */
+.transfer-summary {
+	display: flex;
+	align-items: center;
+	gap: 20px;
+	flex-wrap: wrap;
+	background: var(--panel);
+	border: 1px solid var(--line);
+	border-radius: 12px;
+	padding: 18px 22px;
+	margin-bottom: 22px;
+}
+
+.transfer-summary>div {
+	display: grid;
+	grid-template-columns: auto 1fr;
+	gap: 3px 10px;
+	margin-right: auto;
+}
+
+.transfer-summary .transaction-icon {
+	grid-row: span 2;
+}
+
+.transfer-summary strong {
+	font-size: 12px;
+	font-weight: 500;
+}
+
+.transfer-summary small {
+	font-size: 10px;
+	color: var(--muted);
+}
+
+.transfer-summary p {
+	font-size: 11px;
+	color: var(--muted);
+}
+
+.transfer-summary p strong {
+	display: block;
+	margin-top: 5px;
+	font-variant-numeric: tabular-nums;
+}
+
+/* Мобильные дополнения полей трансфера и фильтра произвольного периода. */
+@media (max-width: 760px) {
+	.stats-filter .period-tabs {
+		width: 100%;
+	}
+
+	.stats-filter .period-tabs span {
+		padding: 7px 8px;
+		font-size: 11px;
+	}
+
+	.stats-filter-fields label {
+		flex: 1;
+		min-width: 135px;
+	}
+
+	.stats-filter-fields label input {
+		width: 100%;
+	}
+
+	.transfer-fields {
+		padding: 15px;
+	}
+
+	.transfer-summary {
+		gap: 16px;
+		padding: 17px;
+	}
+
+	.transfer-summary>div {
+		width: 100%;
+	}
+
+	.transfer-summary p {
+		flex: 1;
+	}
+
+	.entry-amount.transfer {
+		white-space: normal;
+		overflow-wrap: anywhere;
+	}
+
+	.kind-selector {
+		gap: 7px;
+	}
+
+	.kind-selector span {
+		padding: 12px 8px;
+		font-size: 11px;
+	}
+}
+
+:root {
+	--blue: #8dc8ed;
+	/* голубой акцент плановых записей */
+	--blue-line: #425f74;
+	/* граница плановых разделов */
+}
+
+.amount-row {
+	align-items: end;
+}
+
+/* Отдельная группа текущей или плановой статистики. */
+.statistics-group {
+	margin-top: 28px;
+}
+
+.statistics-group>.recent-panel {
+	margin-top: 20px;
+}
+
+.statistics-group.planned-section {
+	padding: 22px;
+	border: 1px solid var(--blue-line);
+	border-radius: var(--radius);
+	background: #8dc8ed06;
+}
+
+.planned-section>.section-heading h2,
+.planned-section>.panel-heading h2 {
+	color: var(--blue);
+}
+
+.planned-section .count-badge {
+	color: var(--blue);
+	border-color: var(--blue-line);
+	background: #8dc8ed0f;
+}
+
+.entry-group {
+	margin-bottom: 25px;
+}
+
+.entry-group.planned-section {
+	border-color: var(--blue-line);
+}
+
+/* Плановые записи: голубое выделение строки и метка состояния. */
+.planned-row {
+	background: #8dc8ed05;
+}
+
+.planned-badge {
+	color: var(--blue);
+	white-space: nowrap;
+}
+
+/* Пояснение будущей даты в форме записи; hidden управляется JavaScript. */
+.planned-note {
+	color: var(--blue);
+	background: #8dc8ed0b;
+	border: 1px solid var(--blue-line);
+	border-radius: 8px;
+	padding: 12px 15px;
+	font-size: 12px;
+}
+
+/* Клиентская валидация: рамка неверного поля и связанная текстовая ошибка. */
+.field-invalid {
+	border-color: var(--red) !important;
+	box-shadow: 0 0 0 1px #e9a08e40;
+}
+
+.field-error {
+	display: block;
+	color: var(--red);
+	font-size: 11px;
+	line-height: 1.5;
+	margin-top: 6px;
+}
+
+.library-rename {
+	flex-wrap: wrap;
+}
+
+.library-rename input {
+	flex: 1;
+	width: 0;
+}
+
+.library-rename .field-error {
+	flex-basis: 100%;
+	order: 2;
+}
+
 @media(max-width:760px) {
-	.statistics-group.planned-section { padding: 15px; }
-	.statistics-group.planned-section .summary-grid { grid-template-columns: 1fr; }
-	.statistics-group.planned-section .summary-card strong { font-size: 23px; }
-	.planned-note { font-size: 11px; }
+	.statistics-group.planned-section {
+		padding: 15px;
+	}
+
+	.statistics-group.planned-section .summary-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.statistics-group.planned-section .summary-card strong {
+		font-size: 23px;
+	}
+
+	.planned-note {
+		font-size: 11px;
+	}
 }

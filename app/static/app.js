@@ -1,8 +1,13 @@
 // @ts-check
 'use strict';
 
-// Switching profiles is a regular, CSRF-protected form submission.
-/** @type {NodeListOf<HTMLSelectElement>} */
+/**
+ * @file Поведение форм без сборки: периоды, трансферы, подтверждение удаления и валидация.
+ * Денежные вычисления используют BigInt; data-* связывают код с Jinja-шаблонами.
+ */
+
+// Выбор профиля отправляет обычную POST-форму с CSRF; без JS остаётся кнопка выбора.
+/** Переключатели профиля; список пуст на странице входа. @type {NodeListOf<HTMLSelectElement>} */
 const profileSwitches = document.querySelectorAll('[data-profile-switch]');
 profileSwitches.forEach(/** @param {HTMLSelectElement} select @returns {void} */ select => {
 	/** @type {HTMLFormElement | null} */
@@ -15,13 +20,13 @@ profileSwitches.forEach(/** @param {HTMLSelectElement} select @returns {void} */
 	if (button) button.hidden = true;
 });
 
-/** @type {HTMLFormElement | null} */
+/** GET-фильтр статистики с radio-переключателями периода. @type {HTMLFormElement | null} */
 const periodForm = document.querySelector('[data-period-form]');
 if (periodForm) {
 	/** @type {HTMLInputElement | null} */
 	const input = periodForm.querySelector('[data-period-date]');
 	if (input) {
-		/** @returns {void} */
+		/** Настроить тип поля даты и включить конечную дату только для range. @returns {void} */
 		const setPeriod = () => {
 			/** @type {HTMLInputElement | null} */
 			const selected = periodForm.querySelector('[name="period"]:checked');
@@ -62,11 +67,11 @@ if (periodForm) {
 	}
 }
 
-/** @type {HTMLDialogElement | null} */
+/** Общий диалог для форм удаления. @type {HTMLDialogElement | null} */
 const confirmation = document.querySelector('#confirmation');
-/** @type {HTMLFormElement | null} */
+/** Форма, ожидающая ответа в диалоге; сбрасывается при его закрытии. @type {HTMLFormElement | null} */
 let pendingForm = null;
-/** @type {NodeListOf<HTMLFormElement>} */
+/** Формы с текстом подтверждения в data-confirm. @type {NodeListOf<HTMLFormElement>} */
 const destructiveForms = document.querySelectorAll('form[data-confirm]');
 
 destructiveForms.forEach(/** @param {HTMLFormElement} form @returns {void} */ form => {
@@ -98,10 +103,10 @@ confirmation?.addEventListener('close', /** @returns {void} */() => {
 });
 
 /**
- * Parse a positive decimal as an integer at the specified scale.
- * @param {string} raw
- * @param {number} scale
- * @returns {bigint | null}
+ * Разобрать положительное десятичное число в целое заданного масштаба без округления.
+ * @param {string} raw Число с точкой/запятой и необязательными пробелами.
+ * @param {number} scale Число дробных разрядов: 2 для денег, 8/36 для курса.
+ * @returns {bigint | null} Масштабированное значение; null для нуля или ошибки формата.
  */
 function parseFixed(raw, scale) {
 	const normalized = raw.trim().replace(/[\s\u00a0]/g, '').replace(',', '.');
@@ -112,20 +117,31 @@ function parseFixed(raw, scale) {
 	return value > 0n ? value : null;
 }
 
-/** @param {bigint} value @param {number} scale @returns {string} */
+/**
+ * Представить масштабированное целое десятичной строкой с точкой, без округления.
+ * @param {bigint} value Целое число минимальных единиц.
+ * @param {number} scale Число дробных разрядов результата.
+ * @returns {string} Строка с фиксированным количеством дробных знаков.
+ */
 function formatFixed(value, scale) {
 	const factor = 10n ** BigInt(scale);
 	return `${value / factor}.${(value % factor).toString().padStart(scale, '0')}`;
 }
 
 
-/** @param {bigint} numerator @param {bigint} denominator @returns {string} */
+/**
+ * Показать положительное отношение с округлением до 36 дробных разрядов.
+ * Точный курс для пересчёта хранится отдельно парой целых, а не этой строкой.
+ * @param {bigint} numerator Числитель курса.
+ * @param {bigint} denominator Положительный знаменатель курса.
+ * @returns {string} Десятичный курс без завершающих нулей.
+ */
 function formatRate(numerator, denominator) {
-	// Keep small rates visible; retain the exact rational separately for recalculation.
+	// Мелкие курсы остаются видимыми; повторный пересчёт использует точную дробь.
 	return formatFixed((numerator * 10n ** 36n + denominator / 2n) / denominator, 36).replace(/\.?0+$/, '');
 }
 
-/** @type {HTMLFormElement | null} */
+/** Форма дохода, расхода или трансфера. @type {HTMLFormElement | null} */
 const entryForm = document.querySelector('[data-entry-form]');
 if (entryForm) {
 	/** @type {HTMLFieldSetElement | null} */
@@ -145,11 +161,16 @@ if (entryForm) {
 	/** @type {HTMLElement | null} */
 	const amountLabel = entryForm.querySelector('[data-source-amount-label]');
 	if (fields && source && sourceCurrency && destination && destinationCurrency && rate && preview) {
-		/** @type {bigint | null} */
+		/** Числитель точного курса: полученные сотые либо введённый масштабированный курс. @type {bigint | null} */
 		let numerator = null;
-		/** @type {bigint | null} */
+		/** Знаменатель курса: исходные сотые либо 10^8 для ручного ввода. @type {bigint | null} */
 		let denominator = null;
-		/** @param {EventTarget | null} changed @returns {void} */
+		/**
+		 * Синхронизировать получение и курс по изменённому полю; половины сотой округляются вверх.
+		 * У курса нет name: в POST отправляются только суммы и валюты.
+		 * @param {EventTarget | null} changed Поле-источник изменения; null при инициализации.
+		 * @returns {void}
+		 */
 		const updateTransfer = changed => {
 			/** @type {HTMLInputElement | null} */
 			const kind = entryForm.querySelector('[name="kind"]:checked');
@@ -198,10 +219,12 @@ if (entryForm) {
 	const occurredAt = entryForm.querySelector('[name="occurred_at"]');
 	/** @type {HTMLElement | null} */
 	const plannedNote = entryForm.querySelector('[data-planned-note]');
+	/** Условная UTC-метка локального времени сервера; не время часового пояса браузера. @type {number} */
 	const serverEpoch = Date.parse(`${entryForm.dataset.serverNow}Z`);
+	/** Начало монотонного отсчёта для продвижения серверных часов. @type {number} */
 	const openedAt = performance.now();
 	if (occurredAt && plannedNote && Number.isFinite(serverEpoch)) {
-		/** @returns {void} */
+		/** Показать пояснение будущей даты по времени сервера, независимо от зоны телефона. @returns {void} */
 		const updatePlannedNote = () => {
 			const now = new Date(serverEpoch + performance.now() - openedAt).toISOString().slice(0, 19);
 			const planned = occurredAt.value > now;
@@ -213,11 +236,17 @@ if (entryForm) {
 	}
 }
 
-/** @typedef {HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement} ValidatedField */
-/** @type {number} */
+/** Поле, поддерживающее Constraint Validation API и сообщения об ошибках.
+ * @typedef {HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement} ValidatedField
+ */
+/** Счётчик уникальных id подсказок для связи через aria-describedby. @type {number} */
 let errorCounter = 0;
 
-/** @param {ValidatedField} field @returns {string} */
+/**
+ * Получить ошибку ввода без изменения DOM; выключенные поля пропускаются.
+ * @param {ValidatedField} field Проверяемое поле формы.
+ * @returns {string} Сообщение пользователю либо пустая строка для корректного значения.
+ */
 function validationMessage(field) {
 	if (field.matches(':disabled')) return '';
 	const value = field.value.trim();
@@ -253,7 +282,12 @@ function validationMessage(field) {
 	return '';
 }
 
-/** @param {ValidatedField} field @param {boolean} show @returns {boolean} */
+/**
+ * Обновить customValidity и при необходимости рамку, текст ошибки и ARIA-связь.
+ * @param {ValidatedField} field Проверяемое поле.
+ * @param {boolean} show Показывать ли ошибку и помечать поле как посещённое.
+ * @returns {boolean} true, если значение допустимо.
+ */
 function validateField(field, show) {
 	const message = validationMessage(field);
 	field.setCustomValidity(message);
@@ -278,6 +312,7 @@ function validateField(field, show) {
 	return !message;
 }
 
+// Первичная проверка — при blur/submit; повторная — при редактировании посещённых полей.
 document.querySelectorAll('form').forEach(form => {
 	/** @type {NodeListOf<ValidatedField>} */
 	const fields = form.querySelectorAll('input:not([type="hidden"]):not([type="radio"]):not([type="checkbox"]):not([type="submit"]):not([type="button"]), select, textarea');

@@ -1,1 +1,77 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="18" fill="#c5e783"/><text x="14" y="47" font-family="sans-serif" font-size="47" font-weight="700" fill="#142015">б</text><circle cx="49" cy="46" r="4" fill="#142015"/></svg>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 64 64"
+   version="1.1"
+   id="svg1"
+   sodipodi:docname="favicon.svg"
+   inkscape:version="1.4.4 (dcaf3e7d9e, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:xlink="http://www.w3.org/1999/xlink"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs1">
+    <linearGradient
+       id="linearGradient42025"
+       inkscape:collect="always">
+      <stop
+         style="stop-color:#e2f3bf;stop-opacity:0.8170476;"
+         offset="0"
+         id="stop42026" />
+      <stop
+         style="stop-color:#c5e783;stop-opacity:1;"
+         offset="1"
+         id="stop42025" />
+    </linearGradient>
+    <radialGradient
+       inkscape:collect="always"
+       xlink:href="#linearGradient42025"
+       id="radialGradient42026"
+       cx="32"
+       cy="32"
+       fx="32"
+       fy="32"
+       r="32"
+       gradientUnits="userSpaceOnUse" />
+  </defs>
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#505050"
+     bordercolor="#ffffff"
+     borderopacity="1"
+     inkscape:showpageshadow="0"
+     inkscape:pageopacity="0"
+     inkscape:pagecheckerboard="1"
+     inkscape:deskcolor="#505050"
+     inkscape:zoom="4.4857086"
+     inkscape:cx="-43.582857"
+     inkscape:cy="23.630603"
+     inkscape:window-width="1920"
+     inkscape:window-height="1003"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg1" />
+  <rect
+     width="64"
+     height="64"
+     fill="#c5e783"
+     id="rect1"
+     rx="18"
+     style="fill:url(#radialGradient42026)" />
+  <text
+     x="14"
+     y="47"
+     font-family="sans-serif"
+     font-size="47"
+     font-weight="700"
+     fill="#142015"
+     id="text1">б</text>
+  <circle
+     cx="49"
+     cy="46"
+     r="4"
+     fill="#142015"
+     id="circle1" />
+</svg>

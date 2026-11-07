@@ -1,16 +1,19 @@
 PRAGMA foreign_keys = ON;
+-- Независимые бюджеты; удаление профиля каскадно удаляет принадлежащие ему данные.
 CREATE TABLE IF NOT EXISTS profiles (
 	id INTEGER PRIMARY KEY,
 	name TEXT NOT NULL CHECK(
 		length(trim(name)) BETWEEN 1 AND 80
 	)
 );
+-- Начальный капитал в целых сотых, уникальный для пары профиль/валюта.
 CREATE TABLE IF NOT EXISTS capitals (
 	profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
 	currency TEXT NOT NULL CHECK(currency IN ('RUB', 'USD', 'EUR')),
 	amount INTEGER NOT NULL,
 	PRIMARY KEY(profile_id, currency)
 );
+-- Пользовательские категории. Отсутствие категории хранится как NULL в entries.
 CREATE TABLE IF NOT EXISTS categories (
 	id INTEGER PRIMARY KEY,
 	profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
@@ -20,6 +23,7 @@ CREATE TABLE IF NOT EXISTS categories (
 	UNIQUE(profile_id, name),
 	UNIQUE(id, profile_id)
 );
+-- Метки профиля; имя уникально внутри профиля.
 CREATE TABLE IF NOT EXISTS tags (
 	id INTEGER PRIMARY KEY,
 	profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
@@ -29,6 +33,8 @@ CREATE TABLE IF NOT EXISTS tags (
 	UNIQUE(profile_id, name),
 	UNIQUE(id, profile_id)
 );
+-- Движение денег: знаковая исходная сумма и необязательная сторона получения.
+-- Тип, курс и плановый статус вычисляются; категория может отсутствовать.
 CREATE TABLE IF NOT EXISTS entries (
 	id INTEGER PRIMARY KEY,
 	profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
@@ -49,7 +55,9 @@ CREATE TABLE IF NOT EXISTS entries (
 			AND amount < 0 AND destination_currency != currency)
 	)
 );
+-- Журнал выбирается внутри профиля от новых дат к старым.
 CREATE INDEX IF NOT EXISTS entries_by_profile_date ON entries(profile_id, occurred_at DESC);
+-- Связи многие-ко-многим; составные FK проверяют общий профиль записи и тега.
 CREATE TABLE IF NOT EXISTS entry_tags (
 	entry_id INTEGER NOT NULL,
 	tag_id INTEGER NOT NULL,
@@ -58,6 +66,7 @@ CREATE TABLE IF NOT EXISTS entry_tags (
 	FOREIGN KEY(entry_id, profile_id) REFERENCES entries(id, profile_id) ON DELETE CASCADE,
 	FOREIGN KEY(tag_id, profile_id) REFERENCES tags(id, profile_id) ON DELETE CASCADE
 );
+-- Постоянные сессии: хеш токена, отпечаток пароля, CSRF и текущий профиль.
 CREATE TABLE IF NOT EXISTS auth_sessions (
 	token_hash TEXT PRIMARY KEY,
 	password_fingerprint TEXT NOT NULL,
@@ -65,6 +74,7 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 	profile_id INTEGER REFERENCES profiles(id) ON DELETE
 	SET NULL
 );
+-- Окно ограничения попыток входа по IP; окно очищается обработчиком входа.
 CREATE TABLE IF NOT EXISTS login_attempts (
 	address TEXT PRIMARY KEY,
 	count INTEGER NOT NULL,

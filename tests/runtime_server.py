@@ -1,4 +1,4 @@
-"""Сервер для проверки HTTP-запуска в отдельном процессе."""
+"""Вспомогательный HTTP-сервер: python -m tests.runtime_server DATABASE PORT."""
 
 import sys
 
@@ -8,6 +8,7 @@ from werkzeug.security import generate_password_hash
 from app import init
 
 def main(database_path: str, port: int) -> None:
+	"""Создать временное приложение и обслуживать HTTP до завершения процесса родителем."""
 	app = init({
 		'DATABASE': database_path,
 		'PASSWORD_HASH': generate_password_hash('smoke-test'),

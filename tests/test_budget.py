@@ -1,3 +1,5 @@
+"""Проверки учёта и HTTP-форм на изолированных временных базах SQLite."""
+
 import re
 import sqlite3
 import tempfile
@@ -6,7 +8,7 @@ import unittest
 from collections.abc import Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import cast
+from typing import TypeAlias, cast
 
 from flask.testing import FlaskClient
 from werkzeug.test import TestResponse
@@ -24,10 +26,13 @@ from app.domain import (
 	calc_statistics
 )
 
-SQLiteValue = str | int | float | bytes | None
+# Возможные значения скалярного SQL-результата в тестовых запросах.
+SQLiteValue: TypeAlias = str | int | float | bytes | None
 
 class BudgetTest(unittest.TestCase):
+	"""Изолированные проверки правил учёта, форм и доступа на временной SQLite-базе."""
 	def setUp(self) -> None:
+		"""Создать временную базу, войти и добавить исходный профиль с капиталом."""
 		self.temp = tempfile.TemporaryDirectory()
 		self.config = {
 			'TESTING': True,
@@ -45,9 +50,11 @@ class BudgetTest(unittest.TestCase):
 		})
 
 	def tearDown(self) -> None:
+		"""Удалить временную базу и её папку."""
 		self.temp.cleanup()
 
 	def csrf(self, client: FlaskClient | None = None, page: str = '/') -> str:
+		"""Извлечь CSRF-токен страницы выбранного тестового клиента."""
 		response = (client or self.client).get(page, follow_redirects=True)
 		match = re.search(
 			r'name="csrf_token" value="([^"]+)"', response.get_data(as_text=True)
@@ -59,6 +66,7 @@ class BudgetTest(unittest.TestCase):
 	def login(
 		self, client: FlaskClient | None = None, password: str = 'test-password'
 	) -> TestResponse:
+		"""Войти тестовым клиентом с предварительным получением CSRF-cookie."""
 		client = client or self.client
 		return client.post('/login', data={
 			'csrf_token': self.csrf(client, '/login'), 'password': password
@@ -70,12 +78,14 @@ class BudgetTest(unittest.TestCase):
 		data: Mapping[str, str | int] | MultiDict[str, str] | None = None,
 		client: FlaskClient | None = None,
 	) -> TestResponse:
+		"""Отправить форму с актуальным CSRF-токеном, сохраняя повторяющиеся ключи."""
 		client = client or self.client
 		form: MultiDict[str, str | int] = MultiDict(data or {})
 		form['csrf_token'] = self.csrf(client)
 		return client.post(path, data=form)
 
 	def entry(self, **updates: str) -> dict[str, str]:
+		"""Сформировать корректную обычную операцию с подменой указанных полей."""
 		form = {
 			'kind': 'expense',
 			'amount': '12,34',
@@ -87,10 +97,12 @@ class BudgetTest(unittest.TestCase):
 		return form
 
 	def scalar(self, query: str, args: tuple[SQLiteValue, ...] = ()) -> SQLiteValue:
+		"""Выполнить тестовый SQL-запрос и вернуть первое скалярное значение."""
 		with self.app.app_context():
 			return cast(SQLiteValue, db.get().execute(query, args).fetchone()[0])
 
 	def add_category(self, name: str = 'Продукты') -> int:
+		"""Добавить категорию через форму и вернуть её ID."""
 		response = self.post('/library/categories/add', {'name': name})
 		self.assertEqual(response.status_code, 302)
 		return cast(int, self.scalar(
@@ -98,11 +110,13 @@ class BudgetTest(unittest.TestCase):
 		))
 
 	def add_tag(self, name: str = 'дом') -> int:
+		"""Добавить тег через форму и вернуть его ID."""
 		response = self.post('/library/tags/add', {'name': name})
 		self.assertEqual(response.status_code, 302)
 		return cast(int, self.scalar('SELECT id FROM tags WHERE name = ?', (name,)))
 
 	def test_pages_and_headers(self) -> None:
+		"""Проверить доступность страниц, ресурсов и защитные HTTP-заголовки."""
 		for path in (
 			'/',
 			'/entries',
@@ -128,6 +142,7 @@ class BudgetTest(unittest.TestCase):
 			response.close()
 
 	def test_exact_money_and_independent_balances(self) -> None:
+		"""Проверить точность сотых и независимость балансов валют."""
 		for form in (
 			self.entry(amount='0.10'),
 			self.entry(amount='0.20'),
@@ -150,6 +165,7 @@ class BudgetTest(unittest.TestCase):
 				to_money(invalid)
 
 	def test_required_comment_future_date_and_time(self) -> None:
+		"""Проверить обязательный комментарий и отбраковку неверных сумм, типов и дат."""
 		for changes in (
 			{'comment': '  '},
 			{'amount': '0'},
@@ -173,6 +189,7 @@ class BudgetTest(unittest.TestCase):
 		self.assertEqual(self.scalar('SELECT count(*) FROM entries'), 0)
 
 	def test_edit_delete_and_tag_replacement(self) -> None:
+		"""Проверить изменение операции, замену тегов и необратимое удаление."""
 		tag = self.add_tag()
 		self.assertEqual(self.post(
 			'/entries/new', self.entry(tags=str(tag))
@@ -195,6 +212,7 @@ class BudgetTest(unittest.TestCase):
 		self.assertEqual(self.scalar('SELECT count(*) FROM entries'), 0)
 
 	def test_category_deletion_sets_null_and_default_is_virtual(self) -> None:
+		"""Проверить NULL после удаления категории и отсутствие строки категории по умолчанию."""
 		self.assertEqual(self.scalar('SELECT count(*) FROM categories'), 0)
 		category = self.add_category()
 		self.post('/entries/new', self.entry(category_id=str(category)))
@@ -207,6 +225,7 @@ class BudgetTest(unittest.TestCase):
 			self.assertEqual(fetch_entries_for(1)[0]['category'], 'Без категории')
 
 	def test_tag_deletion_keeps_entry(self) -> None:
+		"""Проверить каскадное удаление связей тега с сохранением операций."""
 		tag = self.add_tag()
 
 		self.post('/entries/new', self.entry(tags=str(tag)))
@@ -215,6 +234,7 @@ class BudgetTest(unittest.TestCase):
 		self.assertEqual(self.scalar('SELECT count(*) FROM entries'), 1)
 
 	def test_statistics_periods_and_overlapping_tags(self) -> None:
+		"""Проверить периоды, разделение валют и повторный учёт операции по её тегам."""
 		tag1, tag2 = self.add_tag('дом'), self.add_tag('еда')
 		form = MultiDict(self.entry(amount='12.34'))
 		form.setlist('tags', [str(tag1), str(tag2)])
@@ -258,6 +278,7 @@ class BudgetTest(unittest.TestCase):
 			self.assertEqual(self.client.get(url).status_code, 400)
 
 	def test_profile_isolation_and_foreign_keys(self) -> None:
+		"""Проверить изоляцию данных профилей на уровне форм и составных внешних ключей."""
 		cat = self.add_category('Секретная категория')
 		tag = self.add_tag('Секретный тег')
 
@@ -307,6 +328,7 @@ class BudgetTest(unittest.TestCase):
 		)
 
 	def test_capital_changes_and_profile_deletion(self) -> None:
+		"""Проверить изменение капитала и удаление всех данных профиля."""
 		tag = self.add_tag()
 
 		self.post('/entries/new', self.entry(tags=str(tag)))
@@ -333,6 +355,7 @@ class BudgetTest(unittest.TestCase):
 		)
 
 	def test_negative_initial_capital(self) -> None:
+		"""Проверить отрицательный капитал и его отображение без ошибок знака."""
 		self.assertEqual(self.post(
 			'/settings', {
 				'name': 'Долг',
@@ -357,6 +380,7 @@ class BudgetTest(unittest.TestCase):
 		}).status_code, 302)
 
 	def test_entry_filters(self) -> None:
+		"""Проверить поиск, фильтры журнала и включительные границы дат."""
 		cat, tag = self.add_category(), self.add_tag()
 
 		self.post('/entries/new', self.entry(
@@ -384,6 +408,7 @@ class BudgetTest(unittest.TestCase):
 		)
 
 	def test_duplicates_rename_and_escaping(self) -> None:
+		"""Проверить уникальность справочника, переименование и экранирование HTML."""
 		cat = self.add_category()
 		self.assertEqual(self.post(
 			'/library/categories/add', {'name': 'Продукты'}
@@ -398,6 +423,7 @@ class BudgetTest(unittest.TestCase):
 		self.assertNotIn('<script>alert(1)</script>', page)
 
 	def test_auth_csrf_logout_and_password_invalidation(self) -> None:
+		"""Проверить вход, CSRF, выход, сохранение сессий и отзыв при смене пароля."""
 		outsider = self.app.test_client()
 		self.assertEqual(outsider.get('/entries').status_code, 302)
 		self.assertEqual(outsider.get(
@@ -455,6 +481,7 @@ class BudgetTest(unittest.TestCase):
 		self.assertEqual(updated.get('/entries').status_code, 302)
 
 	def test_login_rate_limit_and_no_login_csrf_cookie_on_success(self) -> None:
+		"""Проверить ограничение входа и удаление CSRF-cookie после успешной авторизации."""
 		client = self.app.test_client()
 		for _ in range(5):
 			self.assertEqual(self.login(client, 'wrong').status_code, 401)
@@ -475,6 +502,7 @@ class BudgetTest(unittest.TestCase):
 		self.assertIn('9999', cookie)
 
 	def transfer(self, **updates: str) -> dict[str, str]:
+		"""Сформировать корректный трансфер с подменой указанных полей."""
 		return self.entry(**{
 			'kind': 'transfer', 'amount': '900', 'currency': 'RUB',
 			'destination_currency': 'USD', 'destination_amount': '10',
@@ -482,6 +510,7 @@ class BudgetTest(unittest.TestCase):
 		})
 
 	def test_transfer_amounts_and_both_currency_filters(self) -> None:
+		"""Проверить обе стороны трансфера, его отображение и фильтр каждой валюты."""
 		self.assertEqual(self.post('/entries/new', self.transfer()).status_code, 302)
 		with self.app.app_context():
 			entries = fetch_entries_for(1)
@@ -501,6 +530,7 @@ class BudgetTest(unittest.TestCase):
 		self.assertIn('value="10.00"', edit.get_data(as_text=True))
 
 	def test_transfer_uses_only_final_amount_and_computes_rate(self) -> None:
+		"""Проверить сохранение только сумм без курса и типа операции в БД."""
 		self.assertEqual(self.post('/entries/new', self.transfer(
 			currency='USD', destination_currency='RUB', amount='100',
 			destination_amount='9000', exchange_rate='999', transfer_mode='invalid',
@@ -521,6 +551,7 @@ class BudgetTest(unittest.TestCase):
 		self.assertIn('90', self.client.get('/entries').get_data(as_text=True))
 
 	def test_transfer_edit_delete_and_type_changes(self) -> None:
+		"""Проверить пересчёт балансов при изменении, смене типа и удалении трансфера."""
 		tag = self.add_tag()
 		self.post('/entries/new', self.transfer(tags=str(tag)))
 		self.assertEqual(self.post('/entries/1/edit', self.transfer(
@@ -539,6 +570,7 @@ class BudgetTest(unittest.TestCase):
 			self.assertEqual(fetch_balances(1, fetch_entries_for(1)), {'RUB': 100000, 'USD': 1000, 'EUR': 0})
 
 	def test_transfer_validation_and_failed_edit_preserves_both_sides(self) -> None:
+		"""Проверить неверные поля трансфера и сохранность записи после отказа."""
 		self.post('/entries/new', self.transfer())
 		for changes in (
 			{'destination_currency': 'RUB'}, {'destination_currency': 'GBP'},
@@ -552,6 +584,7 @@ class BudgetTest(unittest.TestCase):
 		self.assertEqual(self.scalar('SELECT count(*) FROM entries'), 1)
 
 	def test_transfer_statistics_excludes_conversion_from_income_and_expense(self) -> None:
+		"""Проверить отдельный учёт конвертации без ложных доходов и расходов."""
 		tag = self.add_tag()
 		self.post('/entries/new', self.transfer(tags=str(tag)))
 		self.post('/entries/new', self.entry(kind='income', amount='12'))
@@ -573,6 +606,7 @@ class BudgetTest(unittest.TestCase):
 			self.assertIn('Обмен валют', page.get_data(as_text=True))
 
 	def test_arbitrary_period_includes_both_boundaries(self) -> None:
+		"""Проверить произвольный диапазон через границы года и високосный день."""
 		for timestamp in ('2019-12-30T23:59:59', '2019-12-31T00:00:00', '2020-01-01T12:30:00',
 		                  '2020-02-29T23:59:59', '2020-03-01T00:00:00'):
 			self.assertEqual(self.post('/entries/new', self.entry(amount='1', occurred_at=timestamp)).status_code, 302)
@@ -590,6 +624,7 @@ class BudgetTest(unittest.TestCase):
 		self.assertIn('29.02.2020', page.get_data(as_text=True))
 
 	def test_week_is_last_seven_days_inclusive(self) -> None:
+		"""Проверить семидневный период через границу года с обеими включёнными датами."""
 		for timestamp in ('2019-12-27T23:59:59', '2019-12-28T00:00:00', '2020-01-03T23:59:59', '2020-01-04T00:00:00'):
 			self.post('/entries/new', self.entry(amount='1', occurred_at=timestamp))
 		with self.app.app_context():
@@ -602,6 +637,7 @@ class BudgetTest(unittest.TestCase):
 		self.assertIn('Последние 7 дней', page.get_data(as_text=True))
 
 	def test_multiple_tag_filter_requires_all_tags(self) -> None:
+		"""Проверить отбор по всем тегам, дополнительные теги и повторяющиеся параметры."""
 		tag1, tag2, tag3 = self.add_tag('дом'), self.add_tag('ремонт'), self.add_tag('ещё')
 		for comment, selected in (
 			('Все выбранные', [tag1, tag2, tag3]),
@@ -620,6 +656,7 @@ class BudgetTest(unittest.TestCase):
 		self.assertIn('Только первый', self.client.get('/entries').get_data(as_text=True))
 
 	def test_schema_rejects_incomplete_or_invalid_transfer(self) -> None:
+		"""Проверить ограничения SQL для неполных трансферов, знака и нулевой суммы."""
 		with self.app.app_context():
 			for amount, currency, received in ((-100, 'RUB', 100), (-100, 'USD', None), (100, 'USD', 100), (-100, None, 100), (0, None, None)):
 				with self.subTest(amount=amount, currency=currency, received=received), self.assertRaises(sqlite3.IntegrityError), db.get():
@@ -629,6 +666,7 @@ class BudgetTest(unittest.TestCase):
 					)
 
 	def test_planned_records_do_not_change_current_balances(self) -> None:
+		"""Проверить будущие операции и исключение обеих сторон трансфера из текущего баланса."""
 		future = (datetime.now() + timedelta(days=2)).isoformat(timespec='seconds')
 		self.assertEqual(self.post('/entries/new', self.entry(amount='50', occurred_at=future, comment='Будущая покупка')).status_code, 302)
 		self.assertEqual(self.post('/entries/new', self.transfer(occurred_at=future)).status_code, 302)
@@ -644,6 +682,7 @@ class BudgetTest(unittest.TestCase):
 		self.assertNotIn('data-now-max', self.client.get('/entries/new').get_data(as_text=True))
 
 	def test_statistics_split_by_time_and_transition_at_exact_instant(self) -> None:
+		"""Проверить разделение статистики и переход в текущие ровно в назначенное время."""
 		self.post('/entries/new', self.entry(kind='income', amount='20', occurred_at='2020-05-12T12:30:00'))
 		self.post('/entries/new', self.entry(amount='10', occurred_at='2020-05-12T12:30:01'))
 		self.post('/entries/new', self.transfer(occurred_at='2020-05-12T12:30:01'))
@@ -661,6 +700,7 @@ class BudgetTest(unittest.TestCase):
 			self.assertEqual(after['current']['totals']['expense'], 1000)
 
 	def test_signed_amounts_and_nullable_category(self) -> None:
+		"""Проверить знаковое хранение сумм, вычисление типа и nullable-категорию."""
 		for kind in ('income', 'expense'):
 			self.assertEqual(self.post('/entries/new', self.entry(kind=kind, amount='1.23')).status_code, 302)
 		self.assertEqual(self.scalar('SELECT amount FROM entries WHERE id=1'), 123)
