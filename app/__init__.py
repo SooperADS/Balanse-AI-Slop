@@ -119,6 +119,7 @@ def authenticate() -> Response | None:
 def _set_session_cookie(response: Response, token: str) -> None:
 	"""Выдать HttpOnly-cookie без прикладного срока сессии.
 
+	SameSite=Lax допускает вход по внешней ссылке и последующее GET-перенаправление.
 	Args:
 	    response: Ответ, в который добавляется cookie.
 	    token: Секрет серверной сессии. Браузер может ограничить хранение cookie."""
@@ -127,7 +128,7 @@ def _set_session_cookie(response: Response, token: str) -> None:
 		token,
 		expires=datetime(9999, 12, 31, tzinfo=timezone.utc),
 		httponly=True,
-		samesite='Strict',
+		samesite='Lax',
 		secure=False
 	)
 
@@ -143,7 +144,8 @@ def response_headers(response: Response) -> Response:
 		response.headers['Cache-Control'] = 'no-store'
 	response.headers['X-Content-Type-Options'] = 'nosniff'
 	response.headers['X-Frame-Options'] = 'DENY'
-	response.headers['Referrer-Policy'] = 'no-referrer'
+	# Не передаём путь и пароль приглашения в Referer, сохраняя Origin обычных POST-форм.
+	response.headers['Referrer-Policy'] = 'strict-origin'
 	response.headers['Content-Security-Policy'] = (
 		"default-src 'self';"
 		"style-src 'self';"
@@ -410,7 +412,7 @@ def share_profile() -> str:
 
 		try:
 			qr_image = segno.make_qr(link, error='L').svg_data_uri(
-				scale=4, light='white', dark='black'
+				scale=4, light='white', dark='#7b8b29'
 			)
 		except segno.DataOverflowError:
 			qr_error = (

@@ -17,7 +17,7 @@ from app import config
 
 import main
 
-def load_config() -> tuple[config.AppConfig, str, int]:
+def load_config() -> config.AppConfig:
 	"""Загрузить настройки относительно подменяемого в тесте main.ROOT."""
 	return config.load(main.ROOT)
 
@@ -35,7 +35,7 @@ class RuntimeTest(unittest.TestCase):
 		"""Удалить временную папку теста."""
 		self.temp.cleanup()
 
-	def config(self, text: str) -> tuple[config.AppConfig, str, int]:
+	def config(self, text: str) -> config.AppConfig:
 		"""Записать TOML и прочитать его с временным корнем приложения."""
 		(self.root / 'config.toml').write_text(text)
 		with patch.object(main, 'ROOT', self.root):
@@ -47,20 +47,23 @@ class RuntimeTest(unittest.TestCase):
 			with self.assertRaisesRegex(ValueError, 'Создан config.toml'):
 				load_config()
 
-			self.assertEqual((self.root / 'config.toml').stat().st_mode & 0o777, 0o600)
-			cfg, _, _ = load_config()
-			self.assertTrue(check_password_hash(cfg.password_hash, ''))
+			self.assertEqual(
+				(self.root / 'config.toml').stat().st_mode & 0o777, 0o600
+			)
+			self.assertTrue(
+				check_password_hash(load_config().password_hash, '')
+			)
 
 		text = '[auth]\npassword="my secret"\n[server]\nhost="127.0.0.1"\nport=8081\n'
-		config, host, port = self.config(text)
+		config = self.config(text)
 
-		self.assertEqual((host, port), ('127.0.0.1', 8081))
+		self.assertEqual((config.host, config.port), ('127.0.0.1', 8081))
 		self.assertEqual(config.database, self.root / 'data/budget.sqlite3')
 		self.assertTrue(check_password_hash(
 			config.password_hash, 'my secret'
 		))
 
-		same, _, _ = self.config(text)
+		same = self.config(text)
 		self.assertEqual(
 			same.password_fingerprint, config.password_fingerprint
 		)
@@ -88,7 +91,9 @@ class RuntimeTest(unittest.TestCase):
 			('[::1]:8080', '[::1]:8080'), ('[2001:db8::1]', '[2001:db8::1]'),
 		):
 			with self.subTest(node=node):
-				cfg, _, _ = self.config('[auth]\npassword="private secret"\n[server]\npublic_node="' + node + '"')
+				cfg = self.config(
+					f'[auth]\npassword="private secret"\n[server]\npublic_node="{node}"'
+				)
 				self.assertEqual(cfg.public_node, expected)
 				self.assertEqual(cfg.password, 'private secret')
 				self.assertNotIn('private secret', repr(cfg))

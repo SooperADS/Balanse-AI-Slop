@@ -33,14 +33,23 @@ from app.domain import (
 # Возможные значения скалярного SQL-результата в тестовых запросах.
 SQLiteValue: TypeAlias = str | int | float | bytes | None
 
+# Хост для конфигурации приложения (для тестов)
+TEST_HOST = '127.0.0.1'
+# Порт для конфигурации приложения (для тестов)
+TEST_PORT = 1080
+
 class BudgetTest(unittest.TestCase):
 	"""Изолированные проверки правил учёта, форм и доступа на временной SQLite-базе."""
 	def setUp(self) -> None:
 		"""Создать временную базу, войти и добавить исходный профиль с капиталом."""
 		self.temp = tempfile.TemporaryDirectory()
 		self.config = config.AppConfig(
+			TEST_HOST,
+			TEST_PORT,
 			database=Path(self.temp.name) / 'test.sqlite3',
-			password_hash=generate_password_hash('test-password', method='pbkdf2:sha256:1000'),
+			password_hash=generate_password_hash(
+				'test-password', method='pbkdf2:sha256:1000'
+			),
 			password_fingerprint=config.token_hash('test-password'),
 			password='test-password',
 		)
@@ -157,8 +166,13 @@ class BudgetTest(unittest.TestCase):
 		"""Проверить публичный узел, URL-кодирование, QR и вход именно в приглашённый профиль."""
 		password = 'Пароль & + ? # / ='
 		self.config = config.AppConfig.from_password(
-			self.config.database, password, public_node='budget.home:8081',
+			TEST_HOST,
+			TEST_PORT,
+			self.config.database,
+			password,
+			public_node='budget.home:8081',
 		)
+
 		init(self.config, testing=True)
 		self.login(password=password)
 		self.post('/profiles/new', {'name': 'Работа'})
@@ -168,7 +182,7 @@ class BudgetTest(unittest.TestCase):
 		self.assertEqual(parse_qs(parts.query), {'profile_id': ['2'], 'password': [password]})
 		page = self.client.get('/profiles/share')
 		self.assertIn('data:image/svg+xml', page.get_data(as_text=True))
-		self.assertEqual(page.headers['Referrer-Policy'], 'no-referrer')
+		self.assertEqual(page.headers['Referrer-Policy'], 'strict-origin')
 		guest = self.app.test_client()
 		response = guest.get('/invite?' + parts.query)
 		self.assertEqual(response.status_code, 302)
@@ -201,15 +215,24 @@ class BudgetTest(unittest.TestCase):
 	def test_invitation_failures_and_shared_attempt_limit(self) -> None:
 		"""Проверить обязательные параметры, удалённый профиль и общий лимит входа."""
 		guest = self.app.test_client()
-		for query in ('profile_id=1', 'password=test-password', 'profile_id=no&password=',
-		              'profile_id=0&password=', 'profile_id=999999999999999999999&password='):
+		for query in (
+			'profile_id=1',
+			'password=test-password',
+			'profile_id=no&password=',
+			'profile_id=0&password=',
+			'profile_id=999999999999999999999&password='
+		):
 			with self.subTest(query=query):
 				self.assertEqual(guest.get('/invite?' + query).status_code, 400)
-		self.assertEqual(guest.get('/invite?profile_id=999&password=test-password').status_code, 404)
+		
+		self.assertEqual(guest.get(
+			'/invite?profile_id=999&password=test-password'
+		).status_code, 404)
 		for _ in range(4):
 			response = guest.get('/invite?profile_id=1&password=wrong')
 			self.assertEqual(response.status_code, 401)
 			self.assertIn('action="/login"', response.get_data(as_text=True))
+
 		self.assertEqual(self.login(guest, 'wrong').status_code, 401)
 		self.assertEqual(guest.get('/invite?profile_id=1&password=test-password').status_code, 429)
 		self.assertEqual(self.login(guest).status_code, 429)
@@ -217,7 +240,9 @@ class BudgetTest(unittest.TestCase):
 
 	def test_invitation_empty_password_and_password_change(self) -> None:
 		"""Явный пустой пароль допустим; старое приглашение после смены пароля отклоняется."""
-		init(config.AppConfig.from_password(self.config.database, ''), testing=True)
+		init(config.AppConfig.from_password(
+			TEST_HOST, TEST_PORT, self.config.database, ''
+		), testing=True)
 		guest = self.app.test_client()
 		self.assertEqual(guest.get('/invite?profile_id=1&password=').status_code, 302)
 		self.assertEqual(guest.get('/').status_code, 200)
@@ -235,8 +260,13 @@ class BudgetTest(unittest.TestCase):
 	def test_sharing_keeps_text_when_qr_capacity_is_exceeded(self) -> None:
 		"""Предельный Unicode-пароль не ломает страницу, если ссылка не помещается в QR."""
 		self.config = config.AppConfig.from_password(
-			self.config.database, '😀' * 512, public_node='budget.home',
+			TEST_HOST,
+			TEST_PORT,
+			self.config.database,
+			'😀' * 512,
+			public_node='budget.home',
 		)
+
 		init(self.config, testing=True)
 		guest = self.app.test_client()
 		self.login(guest, '😀' * 512)
@@ -599,8 +629,31 @@ class BudgetTest(unittest.TestCase):
 			c for c in response.headers.getlist('Set-Cookie') if c.startswith(COOKIE + '=')
 		)
 		self.assertIn('HttpOnly', cookie)
-		self.assertIn('SameSite=Strict', cookie)
+		self.assertIn('SameSite=Lax', cookie)
 		self.assertIn('9999', cookie)
+
+	def test_login_origin_and_referrer_policy(self) -> None:
+		"""Разрешить Origin текущего адреса, сохранив отказ чужому/null и неверному CSRF."""
+		for base in ('http://localhost', 'http://budget.home:8081', 'http://[::1]:8080'):
+			for origin, expected in ((base, 302), ('http://evil.example', 400), ('null', 400)):
+				with self.subTest(base=base, origin=origin):
+					guest = self.app.test_client()
+					page = guest.get('/login', base_url=base)
+					self.assertEqual(page.headers['Referrer-Policy'], 'strict-origin')
+					match = re.search(r'name="csrf_token" value="([^"]+)"', page.get_data(as_text=True))
+					assert match is not None
+					response = guest.post('/login', base_url=base, headers={'Origin': origin}, data={
+						'csrf_token': match.group(1), 'password': 'test-password',
+					})
+					self.assertEqual(response.status_code, expected)
+					if expected == 302:
+						self.assertIn('SameSite=Lax', response.headers['Set-Cookie'])
+		guest = self.app.test_client()
+		guest.get('/login')
+		response = guest.post('/login', headers={'Origin': 'http://localhost'}, data={
+			'csrf_token': 'wrong', 'password': 'test-password',
+		})
+		self.assertEqual(response.status_code, 400)
 
 	def transfer(self, **updates: str) -> dict[str, str]:
 		"""Сформировать корректный трансфер с подменой указанных полей."""

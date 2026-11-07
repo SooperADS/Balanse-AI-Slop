@@ -13,12 +13,13 @@ ROOT: Path = Path(__file__).resolve().parent
 def main() -> int:
 	"""Загрузить настройки и запустить сервер; вернуть 1 при ошибке конфигурации."""
 	try:
-		cfg, host, port = config.load(ROOT)
+		cfg = config.load(ROOT)
 		app = init(cfg)
 	except (OSError, ValueError) as error:
 		print(f'Не удалось запустить приложение: {error}', file=sys.stderr)
 		return 1
 
+	host, port = cfg.host, cfg.port
 	print(f'Домашняя бухгалтерия: http://{host}:{port}', flush=True)
 	public_link_base = cfg.public_link_base
 	if host != '127.0.0.1' and public_link_base:
