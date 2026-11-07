@@ -1,6 +1,10 @@
 {% extends 'base.html' %}{% block content %}
-<section class="panel error-page"><span class="eyebrow">ОШИБКА {{ code }}</span>
+<section class="panel error-page">
+	<span class="eyebrow">ОШИБКА {{ code }}</span>
 	<h1>{{ code }}</h1>
-	<p>{{ message }}</p><a class="button primary"
-		href="{{ url_for('overview' if g.get('auth') else 'login') }}">Вернуться в приложение</a>
-</section>{% endblock %}
+	<p>{{ message }}</p>
+	<a class="button primary" href="{{ url_for('overview' if g.get('auth') else 'login') }}">
+		Вернуться в приложение
+	</a>
+</section>
+{% endblock %}

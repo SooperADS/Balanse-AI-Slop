@@ -1,12 +1,18 @@
 {% extends 'base.html' %}{% block title %}Вход — Баланс{% endblock %}
-{% block content %}<div class="login-brand"><span class="brand-mark">б<span>·</span></span><span>баланс</span></div>
+{% block content %}
+<div class="login-brand">
+	<span class="brand-mark">б<span>·</span></span><span>баланс</span>
+</div>
 <section class="login-card">
-	<div class="login-icon">{{ icon('lock') }}</div><span class="eyebrow">ДОМАШНЯЯ БУХГАЛТЕРИЯ</span>
-	<h1>Всё под контролем.</h1>
-	<p class="muted">Войдите, чтобы продолжить вести свой бюджет.</p>
-	<form method="post" class="stack">{{ csrf() }}<label>Пароль<input type="password" name="password"
-				autocomplete="current-password" required autofocus maxlength="4096"
-				placeholder="Введите пароль приложения"></label><button class="button primary full">Войти {{
-			icon('arrow') }}</button></form>
+	<div class="login-icon">{{ icon('lock') }}</div>
+	<span class="eyebrow">ДОМАШНЯЯ БУХГАЛТЕРИЯ</span>
+	<h1>Всё под контролем</h1>
+	<p class="muted">Войдите, чтобы продолжить вести свой бюджет</p>
+	<form method="post" class="stack">{{ csrf() }}
+		<label>Пароль<input type="password" name="password" autocomplete="current-password" autofocus maxlength="512"
+				placeholder="Введите пароль приложения">
+		</label>
+		<button class="button primary full">Войти {{ icon('arrow') }}</button>
+	</form>
 	<p class="login-footnote">{{ icon('wallet') }} Ваши финансы. Ваше пространство.</p>
 </section>{% endblock %}

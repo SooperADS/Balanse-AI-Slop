@@ -6,35 +6,85 @@
 		<p class="muted">Доходы, расходы и детали, которые имеют значение</p>
 	</div><a class="button primary" href="{{ url_for('entry_form') }}">{{ icon('plus') }} Добавить запись</a>
 </div>
-<form method="get" class="panel filters"><label class="search-field">Комментарий<input name="q"
-			value="{{ request.args.get('q', '') }}" placeholder="Поиск по комментарию"></label><label>Тип<select
-			name="kind">
-			<option value="">Все операции</option>{% for key, title in [('income','Доходы'),('expense','Расходы')] %}
-			<option value="{{ key }}" {% if request.args.get('kind')==key %} selected{% endif %}>{{ title }}</option>{%
-			endfor %}
-		</select></label><label>Валюта<select name="currency">
-			<option value="">Все валюты</option>{% for c in currencies %}<option{% if request.args.get('currency')==c %}
-				selected{% endif %}>{{ c }}</option>{% endfor %}
-		</select></label><label>Категория<select name="category_id">
-			<option value="">Все категории</option>{% for category in categories %}<option value="{{ category.id }}" {%
-				if request.args.get('category_id')==category.id|string %} selected{% endif %}>{{ category.name }}
-			</option>{% endfor %}
-		</select></label><label>Тег<select name="tag">
-			<option value="">Все теги</option>{% for tag in tags %}<option value="{{ tag.id }}" {% if
-				request.args.get('tag')==tag.id|string %} selected{% endif %}>{{ tag.name }}</option>{% endfor %}
-		</select></label><label>С даты<input type="date" name="from"
-			value="{{ request.args.get('from', '') }}"></label><label>По дату<input type="date" name="to"
-			value="{{ request.args.get('to', '') }}"></label>
-	<div class="filter-buttons"><button class="button secondary">Применить</button><a class="text-link"
-			href="{{ url_for('entry_list') }}">Сбросить</a></div>
+<form method="get" class="panel filters">
+	<label class="search-field">
+		Комментарий
+		<input name="q" value="{{ request.args.get('q', '') }}" placeholder="Поиск по комментарию">
+	</label>
+	<label>
+		Тип
+		<select name="kind">
+			<option value="">Все операции</option>
+			{% for key, title in [('income','Доходы'),('expense','Расходы')] %}
+			<option value="{{ key }}" {% if request.args.get('kind')==key %} selected{% endif %}>
+				{{ title }}
+			</option>
+			{%endfor %}
+		</select>
+	</label>
+	<label>
+		Валюта
+		<select name="currency">
+			<option value="">
+				Все валюты
+			</option>
+			{% for c in currencies %}
+			<option{% if request.args.get('currency')==c %} selected{% endif %}>
+				{{ c }}
+				</option>
+				{% endfor %}
+		</select>
+	</label>
+	<label>
+		Категория
+		<select name="category_id">
+			<option value="">
+				Все категории
+			</option>
+			{% for category in categories %}
+			<option value="{{ category.id }}" {% if request.args.get('category_id')==category.id|string %} selected{%
+				endif %}>
+				{{ category.name }}
+			</option>
+			{% endfor %}
+		</select>
+	</label>
+	<label>
+		Тег
+		<select name="tag">
+			<option value="">Все теги</option>
+			{% for tag in tags %}
+			<option value="{{ tag.id }}" {% if request.args.get('tag')==tag.id|string %} selected{% endif %}>
+				{{ tag.name }}
+			</option>
+			{% endfor %}
+		</select>
+	</label>
+	<label>
+		С даты
+		<input type="date" name="from" value="{{ request.args.get('from', '') }}">
+	</label>
+	<label>
+		По дату
+		<input type="date" name="to" value="{{ request.args.get('to', '') }}">
+	</label>
+	<div class="filter-buttons">
+		<button class="button secondary">Применить</button>
+		<a class="text-link" href="{{ url_for('entry_list') }}">Сбросить</a>
+	</div>
 </form>
 <section class="panel">
 	<div class="panel-heading">
-		<h2>Журнал записей</h2><span class="count-badge">{{ entries|length }}</span>
-	</div>{% if entries %}{{ entry_table(entries, editable=True) }}{% else %}<div class="empty"><span
-			class="empty-icon">{{ icon('entries') }}</span>
+		<h2>Журнал записей</h2>
+		<span class="count-badge">{{ entries|length }}</span>
+	</div>
+	{% if entries %}{{ entry_table(entries, editable=True) }}{% else %}
+	<div class="empty">
+		<span class="empty-icon">{{ icon('entries') }}</span>
 		<h3>Записей не найдено</h3>
-		<p>Измените фильтры или добавьте новую операцию.</p><a class="button secondary"
-			href="{{ url_for('entry_form') }}">Добавить запись</a>
-	</div>{% endif %}
-</section>{% endblock %}
+		<p>Измените фильтры или добавьте новую операцию.</p>
+		<a class="button secondary" href="{{ url_for('entry_form') }}">Добавить запись</a>
+	</div>
+	{% endif %}
+</section>
+{% endblock %}

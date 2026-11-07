@@ -79,10 +79,20 @@
 {% endmacro %}
 
 {% macro breakdown(rows, currency, empty) %}
-{% if rows %}<div class="breakdown-head"><span>Название</span><span>Доходы</span><span>Расходы</span></div>
-<div class="breakdown-list">{% for row in rows %}<div class="breakdown-row"><strong>{{ row.name }}</strong><span
-			class="income">{{ row.income|money }} {{ symbols[currency] }}</span><span class="expense">{{
-			row.expense|money }} {{ symbols[currency] }}</span><progress value="{{ row.income + row.expense }}"
-			max="{{ rows[0].income + rows[0].expense }}" aria-label="Объём операций: {{ row.name }}"></progress></div>{%
-	endfor %}</div>{% else %}<div class="empty compact">{{ empty }}</div>{% endif %}
+{% if rows %}<div class="breakdown-head">
+	<span>Название</span>
+	<span>Доходы</span>
+	<span>Расходы</span>
+</div>
+<div class="breakdown-list">
+	{% for row in rows %}
+	<div class="breakdown-row">
+		<strong>{{ row.name }}</strong>
+		<span class="income">{{ row.income|money }} {{ symbols[currency] }}</span>
+		<span class="expense">{{ row.expense|money }} {{ symbols[currency] }}</span>
+		<progress value="{{ row.income + row.expense }}" max="{{ rows[0].income + rows[0].expense }}"
+			aria-label="Объём операций: {{ row.name }}"></progress>
+	</div>{% endfor %}
+</div>{% else %}
+<div class="empty compact">{{ empty }}</div>{% endif %}
 {% endmacro %}

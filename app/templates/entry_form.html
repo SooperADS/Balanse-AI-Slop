@@ -1,41 +1,87 @@
 {% extends 'base.html' %}{% block title %}{{ 'Изменить' if entry else 'Добавить' }} запись — Баланс{% endblock %}
 {% block content %}
 <div class="page-heading">
-	<div><span class="eyebrow">ЖУРНАЛ ФИНАНСОВ</span>
+	<div>
+		<span class="eyebrow">ЖУРНАЛ ФИНАНСОВ</span>
 		<h1>{{ 'Изменить запись' if entry else 'Новая запись' }}<span class="accent">.</span></h1>
-		<p class="muted">{{ g.profile.name }} · {{ 'Обновите сведения об операции' if entry else 'Каждая запись — шаг к
-			порядку в финансах' }}</p>
-	</div><a class="text-link" href="{{ url_for('entry_list') }}">К журналу {{ icon('arrow') }}</a>
+		<p class="muted">
+			{{ g.profile.name }} · {{ 'Обновите сведения об операции' if entry else 'Каждая запись — шаг к
+			порядку в финансах' }}
+		</p>
+	</div>
+	<a class="text-link" href="{{ url_for('entry_list') }}">К журналу {{ icon('arrow') }}</a>
 </div>
 <section class="panel form-panel">
-	<form method="post" class="stack">{{ csrf() }}<fieldset class="kind-selector">
-			<legend class="sr-only">Тип операции</legend>{% for kind, title in [('expense','Расход'),
-			('income','Доход')] %}<label><input type="radio" name="kind" value="{{ kind }}" required{% if
-					values.get('kind', 'expense' )==kind %} checked{% endif %}><span>{{ icon(kind) }} {{ title
-					}}</span></label>{% endfor %}
+	<form method="post" class="stack">{{ csrf() }}
+		<fieldset class="kind-selector">
+			<legend class="sr-only">Тип операции</legend>
+			{% for kind, title in [('expense','Расход'),
+			('income','Доход')] %}
+			<label>
+				<input type="radio" name="kind" value="{{ kind }}" required{% if values.get('kind', 'expense' )==kind %}
+					checked{% endif %}>
+				<span>{{ icon(kind) }} {{ title }}</span>
+			</label>{% endfor %}
 		</fieldset>
-		<div class="form-grid amount-row"><label>Сумма <span class="required">*</span><input name="amount"
-					value="{{ values.get('amount', '') }}" inputmode="decimal" required maxlength="24"
-					placeholder="0,00" autofocus></label><label>Валюта<select name="currency">{% for c in currencies %}
-					<option{% if values.get('currency', 'RUB' )==c %} selected{% endif %}>{{ c }}</option>{% endfor
-						%}</select></label></div>
-		<div class="form-grid"><label>Дата и время <span class="required">*</span><input type="datetime-local"
-					name="occurred_at" value="{{ values.get('occurred_at', now_local) }}" max="{{ now_local }}" step="1"
-					data-now-max required></label><label>Категория<select name="category_id">{% for category in
-					categories %}<option value="{{ category.id }}" {% if
-						values.get('category_id')|string==category.id|string %} selected{% endif %}>{{ category.name }}
-					</option>{% endfor %}</select></label></div><label>Комментарий <span
-				class="required">*</span><textarea name="comment" rows="3" required maxlength="2000"
-				placeholder="На что потратили или откуда получили деньги?">{{ values.get('comment', '') }}</textarea></label>
+		<div class="form-grid amount-row">
+			<label>
+				Сумма
+				<span class="required">*</span>
+				<input name="amount" value="{{ values.get('amount', '') }}" inputmode="decimal" required maxlength="24"
+					placeholder="0,00" autofocus>
+			</label>
+			<label>
+				Валюта
+				<select name="currency">
+					{% for c in currencies %}
+					<option{% if values.get('currency', 'RUB' )==c %} selected{% endif %}>
+						{{ c }}
+						</option>{% endfor %}
+				</select>
+			</label>
+		</div>
+		<div class="form-grid">
+			<label>Дата и время <span class="required">*</span>
+				<input type="datetime-local" name="occurred_at" value="{{ values.get('occurred_at', now_local) }}"
+					max="{{ now_local }}" step="1" data-now-max required>
+			</label>
+			<label>
+				Категория
+				<select name="category_id">
+					{% for category in categories %}
+					<option value="{{ category.id }}" {% if values.get('category_id')|string==category.id|string %}
+						selected{% endif %}>{{ category.name }}
+					</option>{% endfor %}
+				</select>
+			</label>
+		</div>
+		<label>Комментарий <span class="required">*</span>
+			<textarea name="comment" rows="3" required maxlength="2000"
+				placeholder="На что потратили или откуда получили деньги?">
+				{{ values.get('comment', '') }}
+			</textarea>
+		</label>
 		<fieldset class="tag-fieldset">
-			<legend>Теги <span class="muted">· необязательно</span></legend>{% if tags %}<div class="tag-choices">{% for
-				tag in tags %}<label><input type="checkbox" name="tags" value="{{ tag.id }}" {% if tag.id|string in
-						selected_tags %} checked{% endif %}><span>#{{ tag.name }}</span></label>{% endfor %}</div>{%
-			else %}<p class="muted">Тегов пока нет. Их можно создать в разделе <a class="text-link"
-					href="{{ url_for('library') }}">«Категории и теги»</a>.</p>{% endif %}
+			<legend>Теги <span class="muted">· необязательно</span></legend>
+			{% if tags %}
+			<div class="tag-choices">{% for tag in tags %}
+				<label>
+					<input type="checkbox" name="tags" value="{{ tag.id }}" {% if tag.id|string in selected_tags %}
+						checked{% endif %}>
+					<span>#{{ tag.name }}</span>
+				</label>
+				{% endfor %}
+			</div>{% else %}
+			<p class="muted">
+				Тегов пока нет. Их можно создать в разделе
+				<a class="text-link" href="{{ url_for('library') }}">«Категории и теги»</a>.
+			</p>{% endif %}
 		</fieldset>
-		<div class="form-actions"><button class="button primary">{{ icon('plus' if not entry else 'edit') }} {{
-				'Сохранить изменения' if entry else 'Добавить запись' }}</button><a class="button secondary"
-				href="{{ url_for('entry_list') }}">Отмена</a></div>
+		<div class="form-actions">
+			<button class="button primary">{{ icon('plus' if not entry else 'edit') }}
+				{{ 'Сохранить изменения' if entry else 'Добавить запись' }}
+			</button>
+			<a class="button secondary" href="{{ url_for('entry_list') }}">Отмена</a>
+		</div>
 	</form>
 </section>{% endblock %}

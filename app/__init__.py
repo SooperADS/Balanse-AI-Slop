@@ -109,7 +109,7 @@ def response_headers(response: Response) -> Response:
 	)
 
 	auth, csrf = g.get('auth'), g.get('csrf')
-	if request.endpoint == 'login' and response.status_code != 302 and auth and csrf:
+	if request.endpoint == 'login' and response.status_code != 302 and not auth and csrf:
 		response.set_cookie(LOGIN_COOKIE, csrf, httponly=True, samesite='Strict')
 	
 	if auth and request.endpoint != 'logout':

@@ -8,7 +8,8 @@ profileSwitches.forEach(/** @param {HTMLSelectElement} select @returns {void} */
 	/** @type {HTMLFormElement | null} */
 	const form = select.form;
 	if (!form) return;
-	select.addEventListener('change', /** @returns {void} */ () => form.requestSubmit());
+
+	select.addEventListener('change', /** @returns {void} */() => form.requestSubmit());
 	/** @type {HTMLElement | null} */
 	const button = form.querySelector('.profile-submit');
 	if (button) button.hidden = true;
@@ -35,9 +36,11 @@ if (periodForm) {
 			if (period === 'year') {
 				input.min = '1'; input.max = '9999'; input.step = '1';
 				input.value = old.slice(0, 4);
-			} else if (period === 'month') {
+			}
+			else if (period === 'month') {
 				input.value = old.length >= 7 ? old.slice(0, 7) : `${old}-01`;
-			} else {
+			}
+			else {
 				input.value = old.length === 10 ? old : old.length === 7 ? `${old}-01` : `${old}-01-01`;
 			}
 		};
@@ -60,7 +63,7 @@ dateInputs.forEach(/** @param {HTMLInputElement} input @returns {void} */ input 
 	/** @type {number} */
 	const started = performance.now();
 	if (Number.isFinite(initial)) {
-		setInterval(/** @returns {void} */ () => {
+		setInterval(/** @returns {void} */() => {
 			input.max = new Date(initial + performance.now() - started).toISOString().slice(0, 19);
 		}, 1000);
 	}
@@ -72,6 +75,7 @@ const confirmation = document.querySelector('#confirmation');
 let pendingForm = null;
 /** @type {NodeListOf<HTMLFormElement>} */
 const destructiveForms = document.querySelectorAll('form[data-confirm]');
+
 destructiveForms.forEach(/** @param {HTMLFormElement} form @returns {void} */ form => {
 	form.addEventListener('submit', /** @param {SubmitEvent} event @returns {void} */ event => {
 		/** @type {string} */
@@ -88,7 +92,8 @@ destructiveForms.forEach(/** @param {HTMLFormElement} form @returns {void} */ fo
 		confirmation.showModal();
 	});
 });
-confirmation?.addEventListener('close', /** @returns {void} */ () => {
+
+confirmation?.addEventListener('close', /** @returns {void} */() => {
 	if (!confirmation) return;
 	/** @type {HTMLFormElement | null} */
 	const form = pendingForm;
