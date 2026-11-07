@@ -416,7 +416,7 @@ def share_profile() -> str:
 
 		try:
 			qr_image = segno.make_qr(link, error='L').svg_data_uri(
-				scale=4, light='white', dark='#7b8b29'
+				scale=4, light='white', dark='black' #'#7b8b29'
 			)
 		except segno.DataOverflowError:
 			qr_error = (
